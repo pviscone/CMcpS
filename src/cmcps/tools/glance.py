@@ -189,33 +189,6 @@ def register_glance_tools(  # noqa: C901
         return await guarded(auth, lambda: glance.get_analysis(http, settings, analysis=analysis))
 
     @server.tool(
-        name="glance_arc_members",
-        description=(
-            "Analysis Review Committee (ARC) members of one GLANCE ALCM analysis "
-            "(analysis='TOP-25-018') or the ARC-wide statistics roster. Roles "
-            "(Member/LE/Chair) ride in the activeAnalyses strings. " + _AUTH_DOC
-        ),
-    )
-    async def glance_arc_members(
-        analysis: str | None = None,
-        member_contains: str | None = None,
-        limit: Annotated[int, Field(ge=1, le=100)] = 20,
-        offset: Annotated[int, Field(ge=0)] = 0,
-    ) -> ToolEnvelope:
-        """ARC members/statistics."""
-        return await guarded(
-            auth,
-            lambda: glance.arc_members(
-                http,
-                settings,
-                analysis=analysis,
-                member_contains=member_contains,
-                limit=limit,
-                offset=offset,
-            ),
-        )
-
-    @server.tool(
         name="glance_get_note",
         description=(
             "Full detail of one GLANCE ALCM note by numeric id (abstract, "

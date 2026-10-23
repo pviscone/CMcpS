@@ -1,4 +1,5 @@
 """Authentication lifecycle and guard tests."""
+# ruff: noqa: S106 - fixture credential placeholders, not real secrets
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ from typing import Any
 import pytest
 
 from cmcps.auth.service import AuthService
+from cmcps.auth.tokens import ServiceTokenRecord
 from cmcps.config.settings import Settings
 from cmcps.contracts.errors import AuthRequiredError, InvalidInputError
 
@@ -175,3 +177,46 @@ async def test_sign_in_persists_only_allowlisted_cookie_state(
     assert stored.storage_state["origins"] == []
     assert "foreign-secret" not in serialized
     assert "localStorage" not in serialized
+
+
+async def test_reauthenticate_discards_session_and_service_tokens(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    calls: list[int | None] = []
+
+    async def collector(_: Settings, timeout: int | None) -> dict[str, Any]:
+        calls.append(timeout)
+        return valid_storage_state
+
+    auth = AuthService(settings, collector=collector)
+    await auth.sign_in(timeout_seconds=60)
+    token_store = auth.service_token_store()
+    token_store.save_all(
+        {
+            "glance_alcm": ServiceTokenRecord(
+                service="glance_alcm",
+                token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",
+                client_id="cmsfence-cms-alcm",
+                access_token="stale-access",
+                refresh_token="stale-refresh",
+                access_expires_at=1.0,
+                refresh_expires_at=1.0,
+            )
+        }
+    )
+    real_collector = auth.collector
+
+    async def checking_collector(inner_settings: Settings, timeout: int | None):
+        assert auth.store.load() is None
+        assert token_store.load_all() == {}
+        return await real_collector(inner_settings, timeout)
+
+    auth.collector = checking_collector
+    result = await auth.reauthenticate(timeout_seconds=120)
+
+    assert calls == [60, 120]
+    assert result.authenticated is True
+    assert "discarded" in result.message
+    session = await auth.ensure_authenticated()
+    assert session.authenticated

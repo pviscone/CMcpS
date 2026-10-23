@@ -10,7 +10,12 @@ from cmcps.app import build_server
 from cmcps.auth.service import AuthService
 from cmcps.config.settings import Settings
 
-BOOTSTRAP_TOOLS = {"cern_auth_sign_in", "cern_auth_status", "cern_health"}
+BOOTSTRAP_TOOLS = {
+    "cern_auth_sign_in",
+    "cern_auth_reauthenticate",
+    "cern_auth_status",
+    "cern_health",
+}
 INDICO_TOOLS = {
     "indico_get_user_info",
     "indico_search_events",
@@ -96,7 +101,6 @@ GLANCE_TOOLS = {
     "glance_search_analyses",
     "glance_list_published_analyses",
     "glance_get_analysis",
-    "glance_arc_members",
     "glance_list_note_types",
     "glance_search_notes",
     "glance_get_note",
@@ -264,7 +268,6 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "glance_membership_user": {},
     "glance_search_analyses": {},
     "glance_get_analysis": {"analysis": "EXO-24-010"},
-    "glance_arc_members": {"analysis": "EXO-24-010"},
     "glance_list_published_analyses": {},
     "glance_list_note_types": {},
     "glance_search_notes": {},

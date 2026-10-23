@@ -51,6 +51,7 @@ Note: `uvx --from <local dir>` caches the built wheel per package *version*; sou
 
 - `cern_auth_sign_in` — opens a visible browser at the CERN account page, waits for an authenticated Keycloak identity cookie, and stores only allowlisted cookies locally. No localStorage, cookie, or token values are returned to the MCP client.
 - `cern_auth_status` — reports whether a usable session is stored, its expiry when known, and safe metadata such as the credential filename. Call this first when troubleshooting authentication.
+- `cern_auth_reauthenticate` — discards the stored session cookies and captured service Bearer tokens, then runs a fresh visible-browser sign-in. Use when `cern_auth_sign_in` keeps reusing a broken session.
 - `cern_health` — protected smoke tool proving the authentication guard, read-only safety policy, and server wiring after sign-in.
 
 MCP does not guarantee client-side call order, so CMcpS enforces authentication server-side. Every adapter tool returns a structured `AUTH_REQUIRED` result until `cern_auth_sign_in` completes.
@@ -256,7 +257,6 @@ GLANCE exposes separate Keycloak **Bearer-only** APIs per application — browse
 - `glance_search_analyses` — analysis search with the same fields as the ALCM analysis page (`custom`, `code`, `title`, `stage`, `working_group`, `contacts`, `start_date`/`end_date` on registration date, `sort_by`/`sort_order`); the API has no server search, so filters run client-side over the full list, paginated.
 - `glance_get_analysis` — full analysis-page profile by code (`EXO-24-010`) or numeric id: identity/dates/authors/abstract, ARC review committee (chair/LEs/members), paper info, workflow (stage, entry conditions, past events), analysis history, attachments (document versions, GitLab repos, Indico contributions, related-note documents), hashtags, and a derived `links` block (`pubtalk_forum`, `public_result`, `twiki`) built exactly as the page builds them. Support-endpoint failures surface per-section as `{"error": ...}`, never silently.
 - `glance_list_published_analyses` — published analyses; filters incl. `has_arxiv`.
-- `glance_arc_members` — Analysis Review Committee members for one analysis (`analysis='EXO-24-010'`; roles Member/LE/Chair ride in `activeAnalyses` entries) or the ARC-wide statistics roster; optional `member_contains` filter.
 - `glance_list_note_types` — note types (Analysis Note, Conference Report, …).
 - `glance_search_notes` — search notes by `title_contains`/`working_group`/`type_name`/`project`. The upstream index is one ~15 MB payload fetched in full per call: raise `CMCPS_MAX_RESPONSE_BYTES` above ~16 MB to use it (documented in the tool description; no silent truncation).
 - `glance_get_note` — note detail by numeric id.

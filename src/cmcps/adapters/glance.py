@@ -36,9 +36,8 @@ Analysis-page profile endpoints (verified live): ``GET /alcm/api/analysis/
 {id}`` and ``/alcm/api/analysis/ancode/{code}`` plus per-analysis support
 endpoints ``analysis/{id}/{paper,review-committee,history}``,
 ``transitions/{id}``, ``attachments/{documents,gitlab-repositories,
-indico-contributions,paths}/entity/{id}``, ``hashtags/entity/{id}``, and the
-ARC statistics roster ``analysis/statistics-arc-members``. The incubator SPA
-exposes nothing useful read-only and is not implemented.
+indico-contributions,paths}/entity/{id}``, ``hashtags/entity/{id}``. The
+incubator SPA exposes nothing useful read-only and is not implemented.
 
 Size note: the notes index (~15 MB) exceeds the default
 ``CMCPS_MAX_RESPONSE_BYTES`` (10 MB); raise it (e.g. to 20 MB) to use
@@ -715,80 +714,6 @@ async def get_analysis(
             "{'error': ...} marks one support endpoint that failed."
         ),
     }
-
-
-_ARC_KEYS = (
-    "memberId",
-    "memberName",
-    "instCode",
-    "numberOfArcsParticipated",
-    "activeAnalysesCount",
-    "activeAnalyses",
-)
-
-
-async def arc_members(
-    client: SafeHttpClient,
-    settings: Settings,
-    *,
-    analysis: str | None = None,
-    member_contains: str | None = None,
-    limit: int = _DEFAULT_LIMIT,
-    offset: int = 0,
-) -> SearchResult:
-    """Analysis Review Committee (ARC) per-member statistics.
-
-    From ``GET /alcm/api/analysis/statistics-arc-members`` (~0.7 MB). With
-    ``analysis``, rows are filtered to ARC members/chairs/LEs of one analysis
-    by its identifier (e.g. ``EXO-24-010``) and the matching entries are
-    echoed under ``matches``. ``finishedAnalyses`` is dropped to bound output.
-    """
-    _check_page(limit, offset)
-    analysis = _check_text(analysis, "analysis")
-    member_contains = _check_text(member_contains, "member_contains")
-    payload = await _alcm_get(
-        client, settings, "analysis/statistics-arc-members", source="glance alcm arc members"
-    )
-    rows = payload.get("statistics") if isinstance(payload, dict) else None
-    if not isinstance(rows, list):
-        raise UpstreamError(
-            "GLANCE ALCM returned an unexpected ARC-statistics payload",
-            instructions="The API may have changed; check the ALCM frontend.",
-        )
-    ident = analysis.lower() if analysis else None
-    name = member_contains.lower() if member_contains else None
-    items: list[dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        active = row.get("activeAnalyses")
-        active = [a for a in active if isinstance(a, str)] if isinstance(active, list) else []
-        matches = [a for a in active if ident and ident in a.lower()]
-        if ident and not matches:
-            continue
-        if name and name not in str(row.get("memberName") or "").lower():
-            continue
-        item = _project(row, _ARC_KEYS)
-        if ident:
-            item["matches"] = matches
-        items.append(item)
-    query_parts = []
-    if ident:
-        query_parts.append(f"analysis={analysis}")
-    if name:
-        query_parts.append(f"member_contains={member_contains}")
-    note = (
-        "Roles are encoded in the activeAnalyses strings as '<Role> of <ID> (<stage>)' "
-        "with Role in {Member, LE, Chair}."
-    )
-    return _envelope(
-        items,
-        len(items),
-        query="; ".join(query_parts) or "all",
-        limit=limit,
-        offset=offset,
-        note=note,
-    )
 
 
 async def get_note(client: SafeHttpClient, settings: Settings, *, note_id: int) -> dict[str, Any]:

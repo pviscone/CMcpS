@@ -76,6 +76,28 @@ def build_server(
             return _failure(exc)
 
     @server.tool(
+        name="cern_auth_reauthenticate",
+        description=(
+            "Force a fresh CERN SSO login: the stored session cookies and captured "
+            "service Bearer tokens are discarded first, then a visible browser opens "
+            "for CERN SSO. Use this when cern_auth_sign_in keeps reusing a broken session."
+        ),
+    )
+    async def cern_auth_reauthenticate(
+        timeout_seconds: Annotated[
+            int,
+            Field(ge=MIN_SSO_TIMEOUT_SECONDS, le=MAX_SSO_TIMEOUT_SECONDS),
+        ]
+        | None = None,
+    ) -> ToolEnvelope:
+        """Force a fresh CERN login, ignoring any stored session state."""
+        try:
+            result = await runtime_auth.reauthenticate(timeout_seconds)
+            return ToolEnvelope.success(result)
+        except Exception as exc:
+            return _failure(exc)
+
+    @server.tool(
         name="cern_auth_status",
         description=(
             "Show safe CERN SSO session metadata, including whether the auth guard "

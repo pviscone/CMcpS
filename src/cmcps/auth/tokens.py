@@ -183,6 +183,13 @@ class ServiceTokenStore:
         records[record.service] = record
         self.save_all(records)
 
+    def clear_all(self) -> None:
+        """Remove all captured Bearer tokens without touching other state files."""
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise SessionStoreError("The service-token store could not be removed") from exc
+
     def clear(self, service: str) -> None:
         records = self.load_all()
         if service in records:

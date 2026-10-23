@@ -224,6 +224,14 @@ class AuthService:
             message="CERN SSO completed and the local session was stored." + note,
         )
 
+    async def reauthenticate(self, timeout_seconds: int | None = None) -> SignInResult:
+        """Discard the stored SSO session and captured Bearer tokens, then sign in fresh."""
+        self.store.clear()
+        self.service_token_store().clear_all()
+        result = await self.sign_in(timeout_seconds)
+        result.message += " Stored cookies and service tokens were discarded first."
+        return result
+
     def _persist_service_tokens(self, exchanges: dict[str, Any]) -> list[str]:
         """Parse intercepted token responses and store them; best effort."""
         captured: list[str] = []

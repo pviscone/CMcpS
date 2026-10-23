@@ -279,9 +279,8 @@ Authenticated discovery (browser network inspection) found the mechanism:
   `/alcm/api/attachments/{documents,gitlab-repositories,indico-contributions,
   paths}/entity/{id}` (+`/alcm/api/attachments/tags`),
   `/alcm/api/hashtags/entity/{id}`; per-related-note documents are fetched
-  via `/alcm/api/attachments/documents/entity/{note_id}`. The UI's
-  `/alcm/api/analysis/statistics-arc-members` serves the per-member ARC
-  statistics roster (~0.7 MB). The page's "Pubtalk Forum" and "Public
+  via `/alcm/api/attachments/documents/entity/{note_id}`. The page's "Pubtalk
+  Forum" and "Public
   Result" links are pure client-side derivations —
   `https://cms-pub-talk.web.cern.ch/c/{WG}/{paperIdentifier}` and
   `https://cms-results.web.cern.ch/cms-results/public-results/{preliminary-results|publications}/{paperIdentifier}/`
@@ -293,9 +292,9 @@ Authenticated discovery (browser network inspection) found the mechanism:
 - **Membership endpoints verified live**: `/membership/api/user`,
   `/membership/api/members/search?q=`. `/members`, `/members/{id}`, `/teams`,
   `/managers` are 404/500 — deliberately not exposed.
-- **Tools** (13): `glance_alcm_user`, `glance_membership_user`,
+- **Tools** (12): `glance_alcm_user`, `glance_membership_user`,
   `glance_search_analyses`, `glance_list_published_analyses`,
-  `glance_get_analysis`, `glance_arc_members`, `glance_list_note_types`, `glance_search_notes`, `glance_get_note`,
+  `glance_get_analysis`, `glance_list_note_types`, `glance_search_notes`, `glance_get_note`,
   `glance_list_projects`, `glance_list_alcm_working_groups`
   (kind=physics/non-physics/all), `glance_alcm_members`,
   `glance_membership_search_members`. Filters are client-side where the
