@@ -31,7 +31,10 @@ def register_cmssdt_tools(
         name="cmssdt_list_releases",
         description=(
             "List announced CMSSW releases per architecture from the SDT "
-            "ReleasesXML feed. Filters: arch_contains (e.g. 'el9_amd64'), "
+            "ReleasesXML feed — the entry point for 'which CMSSW releases exist "
+            "for X' questions. For integration-build status use "
+            "cmssdt_list_ib_queues/cmssdt_ib_summary; NOT for source code "
+            "search (gitlab_*). Filters: arch_contains (e.g. 'el9_amd64'), "
             "label_contains (e.g. 'CMSSW_15_0'), state (e.g. 'Announced'). "
             "Public; the interactive IB dashboards are SSO-only."
         ),
@@ -66,7 +69,15 @@ def register_cmssdt_tools(
         ),
     )
     async def cmssdt_list_ib_queues(
-        family: str | None = None,
+        family: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Case-insensitive CMSSW release family substring filter, "
+                    "e.g. 'CMSSW_15_0' or 'CMSSW_20'"
+                )
+            ),
+        ] = None,
         limit: Annotated[int, Field(ge=1, le=2000)] = 100,
         offset: Annotated[int, Field(ge=0)] = 0,
     ) -> ToolEnvelope:
@@ -87,7 +98,10 @@ def register_cmssdt_tools(
     )
     async def cmssdt_ib_summary(
         queue: str | None = None,
-        arch: str | None = None,
+        arch: Annotated[
+            str | None,
+            Field(description="Architecture name substring, e.g. el8_amd64_gcc12"),
+        ] = None,
         status: str | None = None,
         limit: Annotated[int, Field(ge=1, le=2000)] = 100,
         offset: Annotated[int, Field(ge=0)] = 0,
@@ -154,7 +168,14 @@ def register_cmssdt_tools(
         ),
     )
     async def cmssdt_list_open_prs(
-        family: str,
+        family: Annotated[
+            str,
+            Field(
+                description=(
+                    "CMSSW release family without the trailing _X, e.g. CMSSW_15_0 or CMSSW_20_1"
+                )
+            ),
+        ],
         *,
         repo: str | None = None,
         state: str | None = "open",
@@ -208,7 +229,10 @@ def register_cmssdt_tools(
     )
     async def cmssdt_build_log_url(
         ib_name: str,
-        arch: str,
+        arch: Annotated[
+            str,
+            Field(description="Full architecture name, e.g. el8_amd64_gcc12"),
+        ],
         fwlite: bool = False,
     ) -> ToolEnvelope:
         """Build-log URL derivation."""

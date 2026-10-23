@@ -32,8 +32,11 @@ def register_mkdocs_tools(
     @server.tool(
         name="mkdocs_search",
         description=(
-            "Full-text search of a MkDocs site over its search index "
-            "(title hits weigh 10x). Client-side scoring; snippets included." + _BASE_DOC
+            "Full-text search of a MkDocs site over its search index (title "
+            "hits weigh 10x) — docs systems such as cms-*.docs.cern.ch hosted "
+            "as MkDocs. For a unified search across many CMS docs sources use "
+            "cmssearch_search instead. Client-side scoring; snippets "
+            "included." + _BASE_DOC
         ),
     )
     async def mkdocs_search(
@@ -51,7 +54,8 @@ def register_mkdocs_tools(
         name="mkdocs_list_pages",
         description=(
             "List all pages of a MkDocs site (locations + titles) from its "
-            "search index, with optional substring path filter." + _BASE_DOC
+            "search index, with optional substring path filter — browse a "
+            "site's structure before reading with mkdocs_get_page." + _BASE_DOC
         ),
     )
     async def mkdocs_list_pages(
@@ -69,7 +73,8 @@ def register_mkdocs_tools(
         description=(
             "Fetch one MkDocs page as plain text (HTML stripped; code and "
             "tables preserved as text). page is the 'location' value from "
-            "mkdocs_search/mkdocs_list_pages (empty string = home page)." + _BASE_DOC
+            "mkdocs_search/mkdocs_list_pages; follow those tools (empty "
+            "string = home page)." + _BASE_DOC
         ),
     )
     async def mkdocs_get_page(base_url: str, page: str = "") -> ToolEnvelope:
@@ -79,8 +84,9 @@ def register_mkdocs_tools(
     @server.tool(
         name="mkdocs_download_file",
         description=(
-            "Bounded download of one static asset hosted on the docs site "
-            "(plot, PDF, ROOT file) into local CMcpS storage."
+            "Bounded download of one static asset hosted on a MkDocs docs "
+            "site (plot, PDF, ROOT file) into local CMcpS storage; URLs come "
+            "from mkdocs_get_page or site pages themselves."
         ),
     )
     async def mkdocs_download_file(file_url: str) -> ToolEnvelope:

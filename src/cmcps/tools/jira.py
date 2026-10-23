@@ -26,13 +26,24 @@ def register_jira_tools(
     @server.tool(
         name="jira_search",
         description=(
-            "JQL search over CERN Jira issues (its.cern.ch). Example: "
-            "project = CMSTRACK AND text ~ 'calibration'. Returns issue "
-            "summaries with status, assignee, dates; page with start_at."
+            "JQL search over CERN Jira issues (its.cern.ch) — service requests, "
+            "project bugs, ticket status. NOT for forum discussions "
+            "(discourse_search) or GitLab repository issues "
+            "(gitlab_search_issues). Example: project = CMSTRACK AND text ~ "
+            "'calibration'. Returns issue summaries with status, assignee, "
+            "dates; page with start_at."
         ),
     )
     async def jira_search(
-        jql: str,
+        jql: Annotated[
+            str,
+            Field(
+                description=(
+                    "JIRA Query Language string, e.g. "
+                    "\"project = CMSTRACK AND text ~ 'calibration'\""
+                )
+            ),
+        ],
         start_at: Annotated[int, Field(ge=0)] = 0,
         max_results: Annotated[int, Field(ge=1, le=100)] = 50,
     ) -> ToolEnvelope:
@@ -46,7 +57,8 @@ def register_jira_tools(
         name="jira_get_issue",
         description=(
             "Full record of one Jira issue by key (e.g. CMSTRACK-123): "
-            "description, comments, attachments, status, people, dates."
+            "description, comments, attachments, status, people, dates; follow "
+            "jira_search with a key it returns."
         ),
     )
     async def jira_get_issue(issue_key: str) -> ToolEnvelope:

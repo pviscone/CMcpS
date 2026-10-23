@@ -31,7 +31,10 @@ def register_cmsresults_tools(
         name="cmsresults_list_groups",
         description=(
             "List CMS physics working groups (HIG, SMP, TOP, ...) with links "
-            "to their publications and preliminary-results indexes."
+            "to their publications and preliminary-results indexes — the entry "
+            "point for CMS-APPROVED PUBLIC results (final plots and papers). "
+            "NOT for internal analyses in progress (glance_*) or the published "
+            "paper record itself (inspire_*)."
         ),
     )
     async def cmsresults_list_groups() -> ToolEnvelope:
@@ -41,8 +44,10 @@ def register_cmsresults_tools(
     @server.tool(
         name="cmsresults_list_papers",
         description=(
-            "List papers of one CMS working group with title, journal, DOI, "
-            "and date. year and title_contains are client-side filters. " + _KIND_DOC
+            "List CMS-approved public papers/PAS results of one working group "
+            "with title, journal, DOI, and date; follow groups from "
+            "cmsresults_list_groups. year and title_contains are client-side "
+            "filters. NOT for arbitrary literature search (inspire_*). " + _KIND_DOC
         ),
     )
     async def cmsresults_list_papers(
@@ -64,8 +69,8 @@ def register_cmsresults_tools(
         description=(
             "Detail of one CMS public-results paper by id (e.g. HIG-11-024): "
             "title, abstract, journal/DOI, arXiv/CDS/INSPIRE links, and "
-            "figure/table download URLs. Searches publications then "
-            "preliminary-results unless kind is given."
+            "figure/table download URLs; follow cmsresults_list_papers. "
+            "Searches publications then preliminary-results unless kind is given."
         ),
     )
     async def cmsresults_get_paper(
@@ -79,8 +84,8 @@ def register_cmsresults_tools(
         name="cmsresults_download_file",
         description=(
             "Download one figure/table/PDF hosted on cms-results.web.cern.ch "
-            "into local CMcpS storage; pass a figures_and_tables URL from "
-            "cmsresults_get_paper."
+            "into local CMcpS storage; pass a figures_and_tables URL returned "
+            "by cmsresults_get_paper."
         ),
     )
     async def cmsresults_download_file(download_url: str) -> ToolEnvelope:

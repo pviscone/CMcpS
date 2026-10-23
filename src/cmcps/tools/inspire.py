@@ -27,8 +27,11 @@ def register_inspire_tools(
         name="inspire_search_papers",
         description=(
             "Search INSPIRE-HEP literature records with the native query syntax "
-            "(e.g. 'a witten and t quark', 'date 2024->2025'). Sort is one of "
-            "bestmatch, mostrecent, mostcited."
+            "(e.g. 'a witten and t quark', 'date 2024->2025'). The right tool "
+            "for published HEP papers, preprints and citation data; internal "
+            "unpublished CMS analyses belong to glance_search_analyses, CERN "
+            "notes/theses to cds_search, and CMS-approved public result pages "
+            "to cmsresults_*. Sort is one of bestmatch, mostrecent, mostcited."
         ),
     )
     async def inspire_search_papers(
@@ -48,9 +51,10 @@ def register_inspire_tools(
     @server.tool(
         name="inspire_get_paper",
         description=(
-            "Full metadata for one INSPIRE-HEP paper. Provide exactly one "
-            "identifier: inspire_id (record id), arxiv_id (e.g. 2401.12345), or "
-            "doi. Priority: inspire_id > arxiv_id > doi."
+            "Full metadata of one published paper; follow inspire_search_papers "
+            "with an identifier it returns. Provide exactly one identifier: "
+            "inspire_id (record id), arxiv_id (e.g. 2401.12345), or doi. "
+            "Priority: inspire_id > arxiv_id > doi."
         ),
     )
     async def inspire_get_paper(
@@ -69,10 +73,11 @@ def register_inspire_tools(
     @server.tool(
         name="inspire_get_author_papers",
         description=(
-            "Papers of one INSPIRE-HEP author. Resolve by author_name (via the "
-            "authors API, best match) or pass the author's INSPIRE BAI directly "
-            "as author_id (e.g. J.Doe.1). Includes citation metrics computed "
-            "from the returned page."
+            "Papers of one published author — 'what has X published', 'papers "
+            "by X': resolve by author_name (via the authors API, best match) or "
+            "pass the author's INSPIRE BAI directly as author_id (e.g. J.Doe.1). "
+            "Includes citation metrics computed from the returned page. NOT for "
+            "CMS collaboration membership (glance_membership_search_members)."
         ),
     )
     async def inspire_get_author_papers(
@@ -97,8 +102,10 @@ def register_inspire_tools(
     @server.tool(
         name="inspire_get_citations",
         description=(
-            "List papers citing an INSPIRE record (direction=citing) or the "
-            "references it cites (direction=cited_by), with a per-year timeline."
+            "Citation graph of one published record: papers citing it "
+            "(direction=citing) or the references it cites (direction=cited_by), "
+            "with a per-year timeline; follow inspire_search_papers with an "
+            "inspire_id it returns."
         ),
     )
     async def inspire_get_citations(
@@ -117,10 +124,12 @@ def register_inspire_tools(
     @server.tool(
         name="inspire_search_collaboration",
         description=(
-            "Search papers of an experimental collaboration (ATLAS, CMS, LHCb, "
-            "ALICE, Belle-II, ...), optionally restricted to a year. Returns "
-            "year distribution, total citations, and the top-cited papers of "
-            "the returned page."
+            "Search the published papers of an experimental collaboration "
+            "(ATLAS, CMS, LHCb, ALICE, Belle-II, ...) — 'all CMS publications "
+            "in 2024'; optionally restricted to a year. Returns year "
+            "distribution, total citations, and the top-cited papers of the "
+            "returned page. NOT for CMS-approved public result pages or plots "
+            "(cmsresults_*)."
         ),
     )
     async def inspire_search_collaboration(
@@ -145,8 +154,10 @@ def register_inspire_tools(
     @server.tool(
         name="inspire_get_paper_figures",
         description=(
-            "Figure links (caption, URL, description) extracted from a paper "
-            "record. Provide exactly one identifier like inspire_get_paper."
+            "Figure links (caption, URL, description) of one published paper; "
+            "follow inspire_search_papers. Provide exactly one identifier like "
+            "inspire_get_paper. NOT for CMS public result-page plots "
+            "(cmsresults_get_paper)."
         ),
     )
     async def inspire_get_paper_figures(
@@ -165,10 +176,11 @@ def register_inspire_tools(
     @server.tool(
         name="inspire_get_references",
         description=(
-            "Formatted reference list of an INSPIRE record. format is bibtex, "
-            "latex-us, latex-eu, or json (client-side shaping of reference "
-            "metadata). Resolvable references are bulk-formatted via a single "
-            "query (capped at 250; truncation reported)."
+            "Formatted reference list of one INSPIRE record; follow "
+            "inspire_search_papers with an inspire_id it returns. format is "
+            "bibtex, latex-us, latex-eu, or json (client-side shaping of "
+            "reference metadata). Resolvable references are bulk-formatted via "
+            "a single query (capped at 250; truncation reported)."
         ),
     )
     async def inspire_get_references(
@@ -187,8 +199,9 @@ def register_inspire_tools(
     @server.tool(
         name="inspire_get_bibtex",
         description=(
-            "Single-entry BibTeX for one paper, by inspire_id, arxiv_id, or "
-            "doi (same priority as inspire_get_paper)."
+            "Single-entry BibTeX of one published paper; follow "
+            "inspire_search_papers. Identifiers: inspire_id, arxiv_id, or doi "
+            "(same priority as inspire_get_paper)."
         ),
     )
     async def inspire_get_bibtex(

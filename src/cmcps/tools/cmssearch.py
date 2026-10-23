@@ -26,10 +26,13 @@ def register_cmssearch_tools(
     @server.tool(
         name="cmssearch_search",
         description=(
-            "Unified search over ~20 CMS/CERN indexed documentation sources "
-            "(cms-search.web.cern.ch, SSO required): title, URL, snippet, "
-            "score, date, tags. Optional sort/rank passthrough, date range, "
-            "and repeated indices filter. Offset pagination via offset+size."
+            "Unified full-text search over ~20 CMS/CERN indexed documentation "
+            "sources (cms-search.web.cern.ch, SSO required) — batch "
+            "documentation answers; returns title, URL, snippet, score, date, "
+            "tags. For a single MkDocs site use mkdocs_search; for legacy wiki "
+            "use twiki_search; for forums use discourse_search. Optional "
+            "sort/rank passthrough, date range, and repeated indices filter. "
+            "Offset pagination via offset+size."
         ),
     )
     async def cmssearch_search(  # noqa: PLR0917
@@ -62,8 +65,9 @@ def register_cmssearch_tools(
         name="cmssearch_get_document",
         description=(
             "Full content of one indexed CMS Search document by source_key "
-            "and document_id (both from cmssearch_search results). Optional "
-            "offset/limit page through long content. SSO required."
+            "and document_id (both from cmssearch_search results); follow "
+            "cmssearch_search. Optional offset/limit page through long "
+            "content. SSO required."
         ),
     )
     async def cmssearch_get_document(
@@ -88,7 +92,8 @@ def register_cmssearch_tools(
         name="cmssearch_list_sources",
         description=(
             "List the documentation sources indexed by CMS Search: "
-            "source_key, index_name, tags, URL. SSO required."
+            "source_key, index_name, tags, URL — get the source_key/indices "
+            "values accepted by cmssearch_search. SSO required."
         ),
     )
     async def cmssearch_list_sources() -> ToolEnvelope:
@@ -99,7 +104,8 @@ def register_cmssearch_tools(
         name="cmssearch_index_stats",
         description=(
             "Index sizes, last-update timestamps, and latest document dates "
-            "per CMS Search source; optional source_key filter. SSO required."
+            "per CMS Search source (source_keys from cmssearch_list_sources); "
+            "optional source_key filter. SSO required."
         ),
     )
     async def cmssearch_index_stats(source_key: str | None = None) -> ToolEnvelope:

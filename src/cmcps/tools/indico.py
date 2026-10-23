@@ -37,8 +37,11 @@ def register_indico_tools(
     @server.tool(
         name="indico_search_events",
         description=(
-            "Search events in an Indico category (legacy export API). Use "
-            "category_id=0 for the root category. Dates use YYYY-MM-DD."
+            "Search events in an Indico category (legacy export API) — meetings, "
+            "conferences, workshops, agendas. For a free-text query across all "
+            "Indico content use indico_search instead; NOT for papers "
+            "(inspire_search_papers). Use category_id=0 for the root category. "
+            "Dates use YYYY-MM-DD."
         ),
     )
     async def indico_search_events(
@@ -69,7 +72,10 @@ def register_indico_tools(
         name="indico_search",
         description=(
             "Full-text search across Indico content types (categories, events, "
-            "contributions, attachments, notes) via the Indico search API."
+            "contributions, attachments, notes) via the Indico search API — the "
+            "entry point for 'find a meeting/talk/slides about X'. NOT for "
+            "published papers (inspire_search_papers), forum discussions "
+            "(discourse_search), or internal CMS analyses (glance_*)."
         ),
     )
     async def indico_search(
@@ -82,8 +88,9 @@ def register_indico_tools(
     @server.tool(
         name="indico_get_event",
         description=(
-            "Fetch metadata for one indico.cern.ch event by its numeric event id, "
-            "optionally including contributions and sessions."
+            "Metadata of one Indico event by its numeric event id; follow "
+            "indico_search or indico_search_events with an event_id they "
+            "return. Optionally includes contributions and sessions."
         ),
     )
     async def indico_get_event(
@@ -106,8 +113,9 @@ def register_indico_tools(
     @server.tool(
         name="indico_get_event_contributions",
         description=(
-            "List the contributions (talks) of an indico.cern.ch event, "
-            "optionally with subcontributions."
+            "List the contributions (talks) of one Indico event; follow "
+            "indico_get_event with its event_id. Optionally includes "
+            "subcontributions."
         ),
     )
     async def indico_get_event_contributions(
@@ -130,8 +138,9 @@ def register_indico_tools(
     @server.tool(
         name="indico_get_event_files",
         description=(
-            "Enumerate all file attachments of an indico.cern.ch event and its "
-            "contributions. Returns metadata and download URLs; use "
+            "Enumerate all file attachments (slides, minutes) of one Indico "
+            "event and its contributions; follow indico_get_event with its "
+            "event_id. Returns metadata and download URLs; use "
             "indico_download_file to fetch one file into local CMcpS storage."
         ),
     )
@@ -148,7 +157,7 @@ def register_indico_tools(
     @server.tool(
         name="indico_download_file",
         description=(
-            "Download an indico.cern.ch attachment (a download_url from "
+            "Download one Indico attachment (a download_url from "
             "indico_get_event_files) into local CMcpS download storage. "
             "Returns the local path and size; file content is not inlined."
         ),

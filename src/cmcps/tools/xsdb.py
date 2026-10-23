@@ -26,9 +26,12 @@ def register_xsdb_tools(
     @server.tool(
         name="xsdb_search",
         description=(
-            "Search CMS cross-section records (XSDB). Filters: particles "
-            "(e.g. 'ttbar'), process_name, energy (e.g. '13'). Records carry "
-            "cross_section, uncertainty, DAS/MCM links. Requires CERN SSO."
+            "Search CMS cross-section records (XSDB): 'cross section of ttbar "
+            "at 13 TeV' questions. Records carry cross_section, uncertainty, "
+            "DAS/MCM links — follow datasets with das_* and production requests "
+            "with mcm_*. NOT for dataset locations (das_search). Filters: "
+            "particles (e.g. 'ttbar'), process_name, energy (e.g. '13'). "
+            "Requires CERN SSO."
         ),
     )
     async def xsdb_search(
@@ -54,7 +57,8 @@ def register_xsdb_tools(
     @server.tool(
         name="xsdb_list_tables",
         description=(
-            "Linked cross-section summary-table names exposed by the XSDB UI (requires CERN SSO)."
+            "Linked cross-section summary-table names exposed by the XSDB UI "
+            "(requires CERN SSO); companion to xsdb_search."
         ),
     )
     async def xsdb_list_tables() -> ToolEnvelope:

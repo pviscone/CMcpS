@@ -27,8 +27,10 @@ def register_gocms_tools(
         name="gocms_list_links",
         description=(
             "Search/list CMS go-links (gocms.cern.ch shortlinks): short name, "
-            "target URL, description, tags, created_by. Optional text search "
-            "and tag filter; paginated. Anonymous public API."
+            "target URL, description, tags, created_by — the directory to find "
+            "a CMS page/URL when you only know its name. NOT a full-text "
+            "documentation search (cmssearch_search). Optional text search and "
+            "tag filter; paginated. Anonymous public API."
         ),
     )
     async def gocms_list_links(
@@ -53,7 +55,7 @@ def register_gocms_tools(
 
     @server.tool(
         name="gocms_get_link",
-        description="One go-link by numeric id (ids come from gocms_list_links).",
+        description=("One go-link by numeric id; follow gocms_list_links with an id it returns."),
     )
     async def gocms_get_link(link_id: Annotated[int, Field(ge=1)]) -> ToolEnvelope:
         """Go-link detail."""
@@ -61,7 +63,9 @@ def register_gocms_tools(
 
     @server.tool(
         name="gocms_list_tags",
-        description="All tags available in the CMS go-link service.",
+        description=(
+            "All tags in the CMS go-link service; use them with gocms_list_links' tags filter."
+        ),
     )
     async def gocms_list_tags() -> ToolEnvelope:
         """Go-link tags."""

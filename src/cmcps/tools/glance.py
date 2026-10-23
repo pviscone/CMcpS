@@ -51,7 +51,12 @@ def register_glance_tools(  # noqa: C901
     @server.tool(
         name="glance_search_analyses",
         description=(
-            "Search GLANCE (CADI) analyses with the same fields as the ALCM "
+            "Search INTERNAL CMS analyses registered in GLANCE (CADI): the "
+            "right tool for 'which CMS analysis/group is studying X', 'status "
+            "of analysis EXO-24-010', or finding an internal analysis by "
+            "identifier, title, stage, working group, or proponent name. NOT "
+            "for published paper records (inspire_search_papers) or approved "
+            "public result pages (cmsresults_*). Filters mirror the ALCM "
             "analysis page: custom (custom identifier, e.g. 'EXO-24'), code "
             "(paper identifier), title, stage, working_group, contacts "
             "(proponent name), start_date/end_date (registration date, "
@@ -99,9 +104,12 @@ def register_glance_tools(  # noqa: C901
     @server.tool(
         name="glance_list_published_analyses",
         description=(
-            "GLANCE published (public) analyses, filtered client-side by "
-            "identifier/title/working_group and has_arxiv (true/false to keep "
-            "only entries with/without an arXiv number). Paginated. " + _AUTH_DOC
+            "List CMS analyses that reached the published stage in GLANCE — a "
+            "bridge between internal analysis records and the published "
+            "literature; for the paper record itself follow up with inspire_*. "
+            "Filtered client-side by identifier/title/working_group and "
+            "has_arxiv (true/false to keep only entries with/without an arXiv "
+            "number). Paginated. " + _AUTH_DOC
         ),
     )
     async def glance_list_published_analyses(
@@ -131,7 +139,8 @@ def register_glance_tools(  # noqa: C901
     @server.tool(
         name="glance_list_note_types",
         description=(
-            "GLANCE ALCM note types (e.g. Analysis Note, Conference Report). " + _AUTH_DOC
+            "GLANCE ALCM note types (e.g. Analysis Note, Conference Report) — "
+            "the exact type_name values accepted by glance_search_notes. " + _AUTH_DOC
         ),
     )
     async def glance_list_note_types() -> ToolEnvelope:
@@ -141,7 +150,10 @@ def register_glance_tools(  # noqa: C901
     @server.tool(
         name="glance_search_notes",
         description=(
-            "Search GLANCE ALCM notes (ANs, conference reports): title_contains, "
+            "Search INTERNAL CMS analysis notes and conference reports stored "
+            "in GLANCE (ANs); the right tool for 'the analysis note documenting "
+            "X'. NOT for published references (inspire_*) or CERN Document "
+            "Server records/theses (cds_search). Filters: title_contains, "
             "working_group (exact code), type_name (exact note type, see "
             "glance_list_note_types), project (exact name). The upstream index "
             "is a single ~15 MB payload fetched in full on every call (requires "
@@ -176,23 +188,35 @@ def register_glance_tools(  # noqa: C901
     @server.tool(
         name="glance_get_analysis",
         description=(
-            "Full GLANCE ALCM analysis-page profile by analysis code (e.g. "
-            "'EXO-24-010') or numeric id: identity, dates, authors, abstract, "
-            "ARC review committee (chair/LEs/members), paper information, workflow "
-            "(current/target stage, entry conditions, past events), analysis "
-            "history, attachments (documents with versions, GitLab repos, Indico "
-            "contributions), hashtags. " + _AUTH_DOC
+            "Full detail page of one internal CMS analysis; follow "
+            "glance_search_analyses with a code it returns. Includes identity, "
+            "dates, authors, abstract, ARC review committee (chair/LEs/members), "
+            "paper information, workflow (current/target stage, entry "
+            "conditions, past events), analysis history, attachments (documents "
+            "with versions, GitLab repos, Indico contributions), hashtags. " + _AUTH_DOC
         ),
     )
-    async def glance_get_analysis(analysis: str) -> ToolEnvelope:
+    async def glance_get_analysis(
+        analysis: Annotated[
+            str,
+            Field(
+                description=(
+                    "CADI analysis identifier (e.g. 'EXO-24-010', also partial "
+                    "custom identifiers like 'EXO-24') or the numeric GLANCE id; "
+                    "codes come from glance_search_analyses."
+                )
+            ),
+        ],
+    ) -> ToolEnvelope:
         """Analysis detail page."""
         return await guarded(auth, lambda: glance.get_analysis(http, settings, analysis=analysis))
 
     @server.tool(
         name="glance_get_note",
         description=(
-            "Full detail of one GLANCE ALCM note by numeric id (abstract, "
-            "authors, approvers, stage). " + _AUTH_DOC
+            "Internal CMS analysis/conference note detail (abstract, authors, "
+            "approvers, stage) by numeric id; follow glance_search_notes with "
+            "an id it returns. " + _AUTH_DOC
         ),
     )
     async def glance_get_note(note_id: Annotated[int, Field(ge=1)]) -> ToolEnvelope:
@@ -215,7 +239,15 @@ def register_glance_tools(  # noqa: C901
         ),
     )
     async def glance_list_alcm_working_groups(
-        kind: Literal["physics", "non-physics", "all"] = "all",
+        kind: Annotated[
+            Literal["physics", "non-physics", "all"],
+            Field(
+                description=(
+                    "'physics' = physics working groups (B2G, TOP, EXO, ...), "
+                    "'non-physics' = non-physics groups, 'all' = both lists."
+                )
+            ),
+        ] = "all",
     ) -> ToolEnvelope:
         """Working-group list."""
         return await guarded(auth, lambda: glance.list_working_groups(http, settings, kind=kind))
@@ -223,8 +255,10 @@ def register_glance_tools(  # noqa: C901
     @server.tool(
         name="glance_alcm_members",
         description=(
-            "GLANCE ALCM member roster, substring name filter, paginated "
-            "(full ~1.1 MB roster fetched per call). " + _AUTH_DOC
+            "GLANCE ALCM member roster: 'who is registered in GLANCE', with "
+            "substring name filter, paginated (full ~1.1 MB roster fetched per "
+            "call). For CMS collaboration members with institute/authorship "
+            "status use glance_membership_search_members. " + _AUTH_DOC
         ),
     )
     async def glance_alcm_members(
@@ -243,9 +277,11 @@ def register_glance_tools(  # noqa: C901
     @server.tool(
         name="glance_membership_search_members",
         description=(
-            "Search CMS members in GLANCE Membership by name (required query); "
-            "returns institute, authorship status, appointments; paginated "
-            "client-side over the upstream result set. " + _AUTH_DOC
+            "Search CMS collaboration members in GLANCE Membership by name "
+            "(required query): 'who is X / institute and CMS authorship status "
+            "of X'; returns institute, authorship status, appointments; "
+            "paginated client-side over the upstream result set. NOT for "
+            "paper authorship — use inspire_*. " + _AUTH_DOC
         ),
     )
     async def glance_membership_search_members(

@@ -27,7 +27,9 @@ def register_gitlab_tools(  # noqa: C901
         name="gitlab_search_projects",
         description=(
             "Search public projects on gitlab.cern.ch by text, programming "
-            "language, or topic. Projects may later be addressed by numeric id "
+            "language, or topic — CERN GitLab repositories and the code inside "
+            "them. NOT for Jira issues (jira_search) or forum discussions "
+            "(discourse_search). Projects may later be addressed by numeric id "
             "or full path (e.g. 'group/name')."
         ),
     )
@@ -60,8 +62,9 @@ def register_gitlab_tools(  # noqa: C901
     @server.tool(
         name="gitlab_get_project",
         description=(
-            "Detailed metadata for one gitlab.cern.ch project (id or 'group/name'): "
-            "statistics, languages, license, and namespace."
+            "Detailed metadata of one gitlab.cern.ch project (id or "
+            "'group/name'): statistics, languages, license, and namespace; "
+            "follow gitlab_search_projects."
         ),
     )
     async def gitlab_get_project(project: str) -> ToolEnvelope:
@@ -71,8 +74,9 @@ def register_gitlab_tools(  # noqa: C901
     @server.tool(
         name="gitlab_list_files",
         description=(
-            "List files and directories of a gitlab.cern.ch project repository "
-            "tree at an optional path and ref."
+            "List files and directories of one gitlab.cern.ch project "
+            "repository tree at an optional path and ref; follow "
+            "gitlab_get_project."
         ),
     )
     async def gitlab_list_files(
@@ -103,7 +107,8 @@ def register_gitlab_tools(  # noqa: C901
         name="gitlab_get_file",
         description=(
             "Read one text file from a gitlab.cern.ch repository (id or "
-            "'group/name'). Binary files are reported without content."
+            "'group/name'); paths come from gitlab_list_files or "
+            "gitlab_search_code. Binary files are reported without content."
         ),
     )
     async def gitlab_get_file(
@@ -120,8 +125,9 @@ def register_gitlab_tools(  # noqa: C901
     @server.tool(
         name="gitlab_get_readme",
         description=(
-            "Locate and return the README of a gitlab.cern.ch project by "
-            "probing common candidate file names."
+            "Locate and return the README of one gitlab.cern.ch project by "
+            "probing common candidate file names; follow "
+            "gitlab_search_projects."
         ),
     )
     async def gitlab_get_readme(
@@ -138,7 +144,8 @@ def register_gitlab_tools(  # noqa: C901
         description=(
             "Search code content (scope='blobs') or file names "
             "(scope='filenames') on gitlab.cern.ch, globally or within one "
-            "project. Requires advanced search to be enabled on the instance."
+            "project — 'where is symbol/config X used in CERN repos'. "
+            "Requires advanced search to be enabled on the instance."
         ),
     )
     async def gitlab_search_code(
@@ -168,7 +175,9 @@ def register_gitlab_tools(  # noqa: C901
     @server.tool(
         name="gitlab_search_issues",
         description=(
-            "Search issues on gitlab.cern.ch, globally or within one project, filtered by state."
+            "Search issues on gitlab.cern.ch, globally or within one project, "
+            "filtered by state — repository-scoped issues; for CERN-wide "
+            "service requests and project bugs use jira_search."
         ),
     )
     async def gitlab_search_issues(
@@ -196,8 +205,9 @@ def register_gitlab_tools(  # noqa: C901
     @server.tool(
         name="gitlab_get_wiki",
         description=(
-            "List the wiki pages of a gitlab.cern.ch project, or fetch one "
-            "page with content when page_slug is given."
+            "List the wiki pages of one gitlab.cern.ch project, or fetch one "
+            "page with content when page_slug is given; project ids/paths come "
+            "from gitlab_search_projects."
         ),
     )
     async def gitlab_get_wiki(

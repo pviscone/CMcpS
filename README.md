@@ -119,7 +119,7 @@ All search/list tools share the `SearchResult` envelope (`source, items, total_c
 
 ## CERN Discourse forum tools (4 sites, one adapter)
 
-Stock Discourse JSON API. `cms-talk` (CMS internal) and `cms-pub-talk` (CMS public announcements) require CERN SSO; `root-forum` and `geant4-forum` are anonymously readable. Every tool takes a `site` argument: `cms-talk`, `cms-pub-talk`, `root-forum`, or `geant4-forum`. Endpoint discovery notes: [docs/m3-adapters.md](docs/m3-adapters.md).
+Stock Discourse JSON API. `cms-talk` (CMS internal discussion) and `cms-pub-talk` (internal CMS publication-review discussion, one category per paper/publication) require CERN SSO; `root-forum` and `geant4-forum` are anonymously readable. Every tool takes a `site` argument: `cms-talk`, `cms-pub-talk`, `root-forum`, or `geant4-forum`. Endpoint discovery notes: [docs/m3-adapters.md](docs/m3-adapters.md).
 
 - `discourse_search` — full-text search across posts and topics (1-based `page`).
 - `discourse_list_topics` — latest/top (with `period`) or one category's topics (`category_id`).
@@ -325,6 +325,3 @@ uv run ruff check .
 
 Live browser automation is not part of the default suite. Unit and integration tests use recorded storage states and mocked network/browser boundaries.
 
-## Milestone scope
-
-M1 delivered authentication, settings, contracts, policy-bound HTTP, and MCP startup. M2 delivered the consolidated Indico, INSPIRE-HEP, CERN GitLab, and CDS read-only surfaces on that foundation; removals and renames relative to the reference servers are listed in [docs/m2-migration.md](docs/m2-migration.md). Additional CMS platforms (Discourse forums, CMS results, Twiki, and the operations backends) are added one at a time in M3.

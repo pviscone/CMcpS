@@ -30,7 +30,11 @@ def register_hltinfo_tools(
 
     @server.tool(
         name="hltinfo_list_menus",
-        description=("HLT menus known to the service (cmshltinfo-dev API). " + _AUTH_DOC),
+        description=(
+            "HLT menus known to the service (cmshltinfo-dev API) — the entry "
+            "point for trigger-menu questions ('which HLT menu ran in year Y'). "
+            "For run/fill/lumi data use cmsonline_*. " + _AUTH_DOC
+        ),
     )
     async def hltinfo_list_menus() -> ToolEnvelope:
         """HLT menu list."""
@@ -47,8 +51,9 @@ def register_hltinfo_tools(
     @server.tool(
         name="hltinfo_get_path_names",
         description=(
-            "HLT path names, optionally narrowed by a simple filter "
-            "(e.g. HLT_Ele, Muon). " + _AUTH_DOC
+            "HLT path names, optionally narrowed by a simple filter (e.g. "
+            "HLT_Ele, Muon) — discover a trigger path name before querying its "
+            "detail with hltinfo_get_path. " + _AUTH_DOC
         ),
     )
     async def hltinfo_get_path_names(name_filter: str | None = None) -> ToolEnvelope:
@@ -61,7 +66,8 @@ def register_hltinfo_tools(
         name="hltinfo_get_path",
         description=(
             "Full record of one HLT path (versions, filter definitions, "
-            "per-run semantics) by exact path name. " + _AUTH_DOC
+            "per-run semantics) by exact path name; follow "
+            "hltinfo_get_path_names. " + _AUTH_DOC
         ),
     )
     async def hltinfo_get_path(path_name: str) -> ToolEnvelope:
@@ -71,7 +77,8 @@ def register_hltinfo_tools(
     @server.tool(
         name="hltinfo_get_path_prescales",
         description=(
-            "Prescale values of one HLT path over a run range (min_run/max_run). " + _AUTH_DOC
+            "Prescale values of one HLT path over a run range "
+            "(min_run/max_run); follow hltinfo_get_path_names. " + _AUTH_DOC
         ),
     )
     async def hltinfo_get_path_prescales(

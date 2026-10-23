@@ -39,8 +39,10 @@ def register_cmsonline_tools(
     @server.tool(
         name="cmsonline_list_runs",
         description=(
-            "List CMS data-taking runs with attributes (start/end time, "
-            "fill, sequence, components). Optional exact filters on "
+            "List CMS data-taking runs with attributes (start/end time, fill, "
+            "sequence, components) — the entry point for run/fill/luminosity "
+            "questions. For LHC fills use cmsonline_list_fills; for trigger "
+            "menus/prescales use hltinfo_*. Optional exact filters on "
             "run_number and fill_number." + _AUTH_DOC
         ),
     )
@@ -64,7 +66,9 @@ def register_cmsonline_tools(
 
     @server.tool(
         name="cmsonline_get_run",
-        description="Full attribute record of one CMS run." + _AUTH_DOC,
+        description=(
+            "Full attribute record of one CMS run; follow cmsonline_list_runs." + _AUTH_DOC
+        ),
     )
     async def cmsonline_get_run(
         run_number: Annotated[int, Field(ge=1)],
@@ -75,8 +79,10 @@ def register_cmsonline_tools(
     @server.tool(
         name="cmsonline_list_fills",
         description=(
-            "List LHC fills (stable beams, durations, energies). Optional "
-            ">= lower bound on fill_number." + _AUTH_DOC
+            "List LHC fills (stable beams, durations, energies) — questions "
+            "about fill numbers, beam energy per fill. For the CMS runs taken "
+            "within a fill use cmsonline_list_runs. Optional >= lower bound on "
+            "fill_number." + _AUTH_DOC
         ),
     )
     async def cmsonline_list_fills(
@@ -95,8 +101,9 @@ def register_cmsonline_tools(
     @server.tool(
         name="cmsonline_list_lumisections",
         description=(
-            "Lumisection records of one run (luminosity, rates). Heavy "
-            "runs return thousands of rows; page with offset." + _AUTH_DOC
+            "Lumisection records of one run (luminosity, rates); follow "
+            "cmsonline_list_runs. Heavy runs return thousands of rows; page "
+            "with offset." + _AUTH_DOC
         ),
     )
     async def cmsonline_list_lumisections(
@@ -117,7 +124,9 @@ def register_cmsonline_tools(
         description=(
             "CMS Online shift schedule (shifter grid of one date): blocks of "
             "role assignments per system (Central, DAQ, HGCAL, TC, ...) with "
-            "shifter name, id, start time, and block length. date is ISO "
+            "shifter name, id, start time, and block length — 'who was on "
+            "shift on date X'. For what happened during a shift use "
+            "cmsonline_elog_search. date is ISO "
             "YYYY-MM-DD (omit for the portal's currently selected day; pass "
             "an explicit date to be precise). Requires CERN SSO + portal "
             "session."

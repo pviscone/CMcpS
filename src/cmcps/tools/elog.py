@@ -26,8 +26,10 @@ def register_elog_tools(
     @server.tool(
         name="cmsonline_elog_search",
         description=(
-            "Search the CMS Online E-Log (shifter logbook). text searches "
-            "entry bodies; optional subject/author filters, date range "
+            "Search the CMS Online E-Log (shifter logbook) — 'what happened "
+            "during run/shift X', operations incident reports. For who was on "
+            "shift use cmsonline_get_shift_schedule. text searches entry "
+            "bodies; optional subject/author filters, date range "
             "(from_date/to_date YYYY-MM-DD), numeric sub_id restricts to one "
             "logbook (empty = every logbook, via "
             "cmsonline_elog_list_logbooks). Page with offset."
@@ -64,7 +66,8 @@ def register_elog_tools(
         name="cmsonline_elog_get_detail",
         description=(
             "Full CMS Online E-Log entry by msg_id: full body text and "
-            "attachment links (from cmsonline_elog_search results)."
+            "attachment links; follow cmsonline_elog_search with an id it "
+            "returns."
         ),
     )
     async def cmsonline_elog_get_detail(
@@ -78,7 +81,8 @@ def register_elog_tools(
         name="cmsonline_elog_list_logbooks",
         description=(
             "E-Log category/tree ids (cat_id/sub_id pairs identifying "
-            "logbooks; sub_id feedback for cmsonline_elog_search)."
+            "logbooks) — get the sub_id values accepted by "
+            "cmsonline_elog_search."
         ),
     )
     async def cmsonline_elog_list_logbooks() -> ToolEnvelope:
@@ -88,7 +92,7 @@ def register_elog_tools(
     @server.tool(
         name="cmsonline_elog_download_attachment",
         description=(
-            "Download one E-Log attachment (cmsonline.cern.ch/Elog/... URL "
+            "Download one E-Log attachment (a cmsonline.cern.ch/Elog/... URL "
             "from cmsonline_elog_get_detail) into local CMcpS storage."
         ),
     )
