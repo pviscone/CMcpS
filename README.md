@@ -15,6 +15,15 @@ uv sync --group dev
 uv run cmcps
 ```
 
+For full functionality two environment variables are needed alongside the SSO session (`cern_auth_sign_in` covers everything else):
+
+- `CMCPS_INDICO_API_TOKEN` — an Indico personal API token (`indp_...`, from indico.cern.ch → your profile → API). Without it, protected Indico events/categories are invisible (they surface as "not found").
+- `CMCPS_GITLAB_TOKEN` — a GitLab personal access token with the `read_api` scope. Without it, internal/private GitLab projects, wikis, issues, and code search are inaccessible.
+
+```bash
+CMCPS_INDICO_API_TOKEN=indp_... CMCPS_GITLAB_TOKEN=glpat-... uv run cmcps
+```
+
 The server communicates over MCP stdio. Install it as an MCP client process or run the console entry point from the command above. `python -m cmcps` is equivalent.
 
 ### Run without a developer checkout (`uvx`)
@@ -58,7 +67,7 @@ MCP does not guarantee client-side call order, so CMcpS enforces authentication 
 
 ## Indico tools (indico.cern.ch)
 
-`CMCPS_INDICO_API_TOKEN` (Indico personal API token, `indp_...`) is optional for public data and required for `indico_get_user_info`.
+`CMCPS_INDICO_API_TOKEN` (Indico personal API token, `indp_...`, created at indico.cern.ch → your profile → API) is optional for public data, **required for protected events and categories**, and for `indico_get_user_info`. The legacy export API ignores SSO cookies: without the token, protected content looks like "not found" (`200` with `count: 0`), which the adapter reports with setup instructions. When the token is set it is the only credential sent to Indico — the server answers HTTP 400 to requests carrying both cookies and a Bearer token.
 
 - `indico_get_user_info` — profile of the configured API-token user.
 - `indico_search_events` — events in a category (legacy export API, `category_id`, date range, `limit`/`offset`).
@@ -306,7 +315,7 @@ Configuration uses environment variables with the `CMCPS_` prefix. Common settin
 | `CMCPS_MAX_DOWNLOAD_BYTES` | `52428800` | Maximum returned/downloaded file size |
 | `CMCPS_REQUIRE_SSO` | `true` | Enforce authentication before protected tools |
 | `CMCPS_INDICO_BASE_URL` | `https://indico.cern.ch` | Indico instance used by the Indico tools |
-| `CMCPS_INDICO_API_TOKEN` | unset | Optional Indico personal API token (`indp_...`) |
+| `CMCPS_INDICO_API_TOKEN` | unset | Indico personal API token (`indp_...`); required for protected events/categories |
 | `CMCPS_INSPIRE_BASE_URL` | `https://inspirehep.net/api` | INSPIRE-HEP API root |
 | `CMCPS_GITLAB_BASE_URL` | `https://gitlab.cern.ch` | CERN GitLab instance |
 | `CMCPS_GITLAB_TOKEN` | unset | Optional GitLab personal access token (`read_api` scope) |

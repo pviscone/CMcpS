@@ -216,6 +216,40 @@ async def test_get_event_unknown_id_raises(tmp_path: Path) -> None:
         await indico.get_event(client, settings, event_id="999999")
 
 
+async def test_get_event_empty_without_token_suggests_indico_token(tmp_path: Path) -> None:
+    """A protected event returns count=0 to the anonymous export; guide the fix."""
+    recorder = Recorder(lambda _: httpx.Response(200, json={"count": 0, "results": []}))
+    settings, client = make_client(tmp_path, recorder, token=None)
+    with pytest.raises(InvalidInputError) as caught:
+        await indico.get_event(client, settings, event_id="1574433")
+    assert "protected" in caught.value.message
+    assert "CMCPS_INDICO_API_TOKEN" in (caught.value.instructions or "")
+
+
+async def test_get_event_unknown_with_token_reports_plain_not_found(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _: httpx.Response(200, json={"count": 0, "results": []}))
+    settings, client = make_client(tmp_path, recorder, token="indp_test")
+    with pytest.raises(InvalidInputError) as caught:
+        await indico.get_event(client, settings, event_id="999999")
+    assert caught.value.message == "Indico event '999999' was not found"
+    assert caught.value.instructions is None
+
+
+async def test_search_events_empty_without_token_notes_protection(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _: httpx.Response(200, json={"count": 0, "results": []}))
+    settings, client = make_client(tmp_path, recorder, token=None)
+    result = await indico.search_events(client, settings, category_id="2091")
+    assert result.items == []
+    assert "CMCPS_INDICO_API_TOKEN" in (result.note or "")
+
+
+async def test_search_events_empty_with_token_has_plain_note(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _: httpx.Response(200, json={"count": 0, "results": []}))
+    settings, client = make_client(tmp_path, recorder, token="indp_test")
+    result = await indico.search_events(client, settings, category_id="2091")
+    assert result.note == "category_id=2091"
+
+
 async def test_contributions_support_subcontributions(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["detail"] == "subcontributions"
@@ -255,6 +289,69 @@ async def test_event_files_collects_resources_and_builds_urls(tmp_path: Path) ->
     assert by_name["talk.pdf"]["download_url"] == (
         "https://indico.cern.ch/event/123456/contributions/c1/attachments/2/3/talk.pdf"
     )
+
+
+async def test_event_files_collects_new_attachment_schema(tmp_path: Path) -> None:
+    """Newer Indico export: folders carry ``attachments`` instead of ``materials``."""
+    payload = {
+        **EVENT,
+        "folders": [
+            {
+                "id": 3356000,
+                "title": None,
+                "attachments": [
+                    {
+                        "_type": "attachment",
+                        "id": 6020000,
+                        "download_url": "https://indico.cern.ch/event/123456/attachments/3356000/6020000/agenda.pdf",
+                        "type": "file",
+                        "filename": "agenda.pdf",
+                        "size": 123,
+                        "modified_dt": "2026-10-06T11:00:00+00:00",
+                    }
+                ],
+            }
+        ],
+        "contributions": [
+            {
+                "id": "c1",
+                "title": "Talk",
+                "folders": [
+                    {
+                        "id": 3356683,
+                        "title": None,
+                        "attachments": [
+                            {
+                                "_type": "attachment",
+                                "id": 6020078,
+                                "download_url": "https://indico.cern.ch/event/123456/contributions/c1/attachments/3356683/6020078/slides.pdf",
+                                "type": "file",
+                                "filename": "slides.pdf",
+                                "size": 456,
+                            },
+                            {
+                                "_type": "attachment",
+                                "id": 6020079,
+                                "type": "link",
+                                "title": "Minutes",
+                                "link_url": "https://docs.google.com/document/d/x",
+                            },
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    recorder = Recorder(lambda _: httpx.Response(200, json={"count": 1, "results": [payload]}))
+    settings, client = make_client(tmp_path, recorder)
+    result = await indico.get_event_files(client, settings, event_id="123456")
+    assert result["total_count"] == 3
+    by_name = {item["filename"]: item for item in result["items"]}
+    assert by_name["agenda.pdf"]["contribution_id"] is None
+    assert by_name["agenda.pdf"]["size_bytes"] == 123
+    assert by_name["slides.pdf"]["contribution_id"] == "c1"
+    assert by_name["Minutes"]["type"] == "link"
+    assert by_name["Minutes"]["download_url"] == "https://docs.google.com/document/d/x"
 
 
 async def test_download_file_rejects_non_indico_hosts(tmp_path: Path) -> None:

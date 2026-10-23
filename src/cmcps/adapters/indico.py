@@ -4,6 +4,15 @@ Covers the retained tools of the MIT-licensed ``indico-mcp`` reference
 implementation (InnovateInfinity87/indico-mcp): the legacy export API
 (``/export/categ|event .json``), the newer ``/search/api/search`` endpoint,
 ``/api/user/``, and bounded local file downloads.
+
+Auth: the legacy export API only sees protected events/categories when the
+request carries an Indico personal API token as ``Authorization: Bearer``
+(``CMCPS_INDICO_API_TOKEN``). SSO cookies do not unlock it; without a token
+protected content returns ``200`` with ``count: 0``, indistinguishable from
+"does not exist" — the adapter surfaces actionable guidance in that case.
+Indico answers HTTP 400 when a request carries both credentials, so when a
+token is configured it is the only credential sent (SSO cookies are skipped).
+
 """
 
 from __future__ import annotations
@@ -40,6 +49,13 @@ def _service_headers(settings: Settings) -> dict[str, str] | None:
     if settings.indico_api_token:
         return {"Authorization": f"Bearer {settings.indico_api_token}"}
     return None
+
+
+def _use_sso_cookies(settings: Settings) -> bool:
+    """Indico answers HTTP 400 to a request carrying both SSO cookies and an
+    ``Authorization: Bearer`` token, so cookies are attached only when no
+    Indico API token is configured."""
+    return settings.indico_api_token is None
 
 
 def _check_date(value: str, *, name: str) -> None:
@@ -85,7 +101,10 @@ async def get_user_info(client: SafeHttpClient, settings: Settings) -> dict[str,
             instructions="Set CMCPS_INDICO_API_TOKEN with an Indico personal API token.",
         )
     response = await client.request(
-        "GET", _url(settings, "/api/user/"), service_headers=_service_headers(settings)
+        "GET",
+        _url(settings, "/api/user/"),
+        authenticated=_use_sso_cookies(settings),
+        service_headers=_service_headers(settings),
     )
     data = json_body(response, source=SOURCE)
     return {
@@ -125,6 +144,7 @@ async def search_events(
         "GET",
         _url(settings, f"/export/categ/{category_id}.json"),
         params=params,
+        authenticated=_use_sso_cookies(settings),
         service_headers=_service_headers(settings),
     )
     envelope = json_body(response, source=SOURCE)
@@ -132,6 +152,12 @@ async def search_events(
     events = [_event_item(event) for event in _as_list(envelope.get("results"))]
     page = offset // limit + 1 if limit else 1
     has_more = offset + len(events) < count if isinstance(count, int) else None
+    note = f"category_id={category_id}"
+    if not events and not settings.indico_api_token:
+        note += (
+            "; empty results may hide a protected category — set"
+            " CMCPS_INDICO_API_TOKEN to see protected events"
+        )
     return SearchResult(
         source=SOURCE,
         items=events,
@@ -139,7 +165,7 @@ async def search_events(
         page=page,
         size=limit,
         has_more=has_more,
-        note=f"category_id={category_id}",
+        note=note,
     )
 
 
@@ -158,6 +184,7 @@ async def search(
             "GET",
             _url(settings, "/search/api/search"),
             params={"q": query, "type": content_type, "limit": limit},
+            authenticated=_use_sso_cookies(settings),
             service_headers=_service_headers(settings),
         )
         payload = json_body(response, source=SOURCE)
@@ -188,12 +215,23 @@ async def _fetch_event(
         "GET",
         _url(settings, f"/export/event/{event_id}.json"),
         params=params,
+        authenticated=_use_sso_cookies(settings),
         service_headers=_service_headers(settings),
     )
     envelope = json_body(response, source=SOURCE)
     events = _as_list(envelope.get("results"))
     if not events:
-        raise InvalidInputError(f"Indico event {event_id!r} was not found")
+        if settings.indico_api_token:
+            raise InvalidInputError(f"Indico event {event_id!r} was not found")
+        raise InvalidInputError(
+            f"Indico event {event_id!r} was not found for the anonymous legacy"
+            " export; it may exist but be protected",
+            instructions=(
+                "Set CMCPS_INDICO_API_TOKEN with an Indico personal API token"
+                " and retry: the legacy export API only sees protected content"
+                " with a Bearer token."
+            ),
+        )
     return events[0]
 
 
@@ -284,6 +322,36 @@ def _iter_materials(container: dict[str, Any]) -> Any:
             yield folder, material
 
 
+def _iter_attachments(container: dict[str, Any]) -> Any:
+    """Newer Indico export schema: folders carry ``attachments`` directly."""
+    for folder in _as_list(container.get("folders")):
+        for attachment in _as_list(folder.get("attachments")):
+            yield folder, attachment
+
+
+def _attachment_entry(
+    settings: Settings,
+    event_id: str,
+    *,
+    folder: dict[str, Any],
+    attachment: dict[str, Any],
+    contribution_id: str | None,
+) -> dict[str, Any]:
+    attachment_id = str(attachment.get("id")) if attachment.get("id") is not None else None
+    return {
+        "filename": attachment.get("filename") or attachment.get("title"),
+        "folder_id": folder.get("id"),
+        "folder_title": folder.get("title"),
+        "material_id": None,
+        "resource_id": attachment_id,
+        "contribution_id": contribution_id,
+        "size_bytes": attachment.get("size"),
+        "download_url": attachment.get("download_url") or attachment.get("link_url"),
+        "type": attachment.get("type") or None,
+        "modified_dt": attachment.get("modified_dt") or None,
+    }
+
+
 def _file_entry(
     settings: Settings,
     event_id: str,
@@ -322,22 +390,9 @@ async def get_event_files(
     """Enumerate all file attachments of an event and its contributions."""
     event = await _fetch_event(client, settings, event_id, detail="contributions")
     files: list[dict[str, Any]] = []
-    for folder, material in _iter_materials(event):
-        resources = _as_list(material.get("resources")) or [material]
-        for resource in resources:
-            files.append(
-                _file_entry(
-                    settings,
-                    event_id,
-                    folder=folder,
-                    material=material,
-                    resource=resource,
-                    contribution_id=None,
-                )
-            )
-    for contribution in _as_list(event.get("contributions")):
-        contribution_id = contribution.get("id")
-        for folder, material in _iter_materials(contribution):
+
+    def collect(container: dict[str, Any], contribution_id: str | None) -> None:
+        for folder, material in _iter_materials(container):
             resources = _as_list(material.get("resources")) or [material]
             for resource in resources:
                 files.append(
@@ -350,6 +405,20 @@ async def get_event_files(
                         contribution_id=contribution_id,
                     )
                 )
+        for folder, attachment in _iter_attachments(container):
+            files.append(
+                _attachment_entry(
+                    settings,
+                    event_id,
+                    folder=folder,
+                    attachment=attachment,
+                    contribution_id=contribution_id,
+                )
+            )
+
+    collect(event, None)
+    for contribution in _as_list(event.get("contributions")):
+        collect(contribution, contribution.get("id"))
     return {
         "source": SOURCE,
         "event_id": event_id,
@@ -379,6 +448,7 @@ async def download_file(
     final = await client.download(
         download_url,
         destination,
+        authenticated=_use_sso_cookies(settings),
         service_headers=_service_headers(settings),
     )
     return {

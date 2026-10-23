@@ -21,6 +21,11 @@ namespace, including intentional removals.
 | `book_room`               | removed                        | Stub; would be a write; needs legacy 40-char API key |
 | `get_reservations`        | removed                        | Stub; room-booking domain out of read-only research scope |
 
+Protected events/categories are invisible to the legacy export API unless the
+request carries an Indico personal API token (`Authorization: Bearer`), set via
+`CMCPS_INDICO_API_TOKEN`; without it they return `200` with `count: 0` and the
+adapter answers "not found" plus configuration instructions.
+
 ## inspirehep-mcp (MohamedElashri/inspirehep-mcp, AGPL-3.0 — clean-room)
 
 | Reference tool | CMcpS tool | Notes |
