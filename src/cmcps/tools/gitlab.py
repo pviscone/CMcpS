@@ -26,9 +26,12 @@ def register_gitlab_tools(  # noqa: C901
     @server.tool(
         name="gitlab_search_projects",
         description=(
-            "Search public projects on gitlab.cern.ch by text, programming "
+            "Search projects on gitlab.cern.ch by text, programming "
             "language, or topic — CERN GitLab repositories and the code inside "
-            "them. NOT for Jira issues (jira_search) or forum discussions "
+            "them. Returns every project visible to the authenticated identity "
+            "(public plus internal/private when signed in or a "
+            "CMCPS_GITLAB_TOKEN is set); pass visibility to restrict. NOT for "
+            "Jira issues (jira_search) or forum discussions "
             "(discourse_search). Projects may later be addressed by numeric id "
             "or full path (e.g. 'group/name')."
         ),
@@ -38,12 +41,13 @@ def register_gitlab_tools(  # noqa: C901
         query: str | None = None,
         language: str | None = None,
         topic: str | None = None,
+        visibility: str | None = None,
         sort_by: str = "last_activity_at",
         order: str = "desc",
         per_page: Annotated[int, Field(ge=1, le=100)] = 20,
         page: Annotated[int, Field(ge=1)] = 1,
     ) -> ToolEnvelope:
-        """Public GitLab project search."""
+        """GitLab project search."""
         return await guarded(
             auth,
             lambda: gitlab.search_projects(
@@ -52,6 +56,7 @@ def register_gitlab_tools(  # noqa: C901
                 query=query,
                 language=language,
                 topic=topic,
+                visibility=visibility,
                 sort_by=sort_by,
                 order=order,
                 per_page=per_page,
@@ -197,6 +202,42 @@ def register_gitlab_tools(  # noqa: C901
                 search_term=search_term,
                 project=project,
                 state=state,
+                per_page=per_page,
+                page=page,
+            ),
+        )
+
+    @server.tool(
+        name="gitlab_list_merge_requests",
+        description=(
+            "List merge requests of one gitlab.cern.ch project, filtered by "
+            "state and ordered by creation or update time — 'latest open MRs "
+            "of project X', 'recently merged MRs of X'. Requires access to the "
+            "project (SSO cookies or CMCPS_GITLAB_TOKEN for "
+            "private/internal)."
+        ),
+    )
+    async def gitlab_list_merge_requests(
+        *,
+        project: str,
+        state: str = "opened",
+        order_by: str = "created_at",
+        sort: str = "desc",
+        search: str | None = None,
+        per_page: Annotated[int, Field(ge=1, le=100)] = 20,
+        page: Annotated[int, Field(ge=1)] = 1,
+    ) -> ToolEnvelope:
+        """Project merge request listing."""
+        return await guarded(
+            auth,
+            lambda: gitlab.list_merge_requests(
+                http,
+                settings,
+                project=project,
+                state=state,
+                order_by=order_by,
+                sort=sort,
+                search=search,
                 per_page=per_page,
                 page=page,
             ),

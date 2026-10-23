@@ -80,7 +80,7 @@ async def test_search_projects_builds_url_and_envelope(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v4/projects"
         params = request.url.params
-        assert params["visibility"] == "public"
+        assert "visibility" not in params
         assert params["search"] == "daq"
         assert params["with_programming_language"] == "Python"
         assert params["topic"] == "analysis"
@@ -106,6 +106,63 @@ async def test_search_projects_builds_url_and_envelope(tmp_path: Path) -> None:
     assert result.items[0]["path_with_namespace"] == "group/example"
     assert result.has_more is False
     assert result.query == "daq"
+
+
+async def test_search_projects_forwards_visibility_when_given(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["visibility"] == "private"
+        return httpx.Response(200, json=[PROJECT])
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    result = await gitlab.search_projects(client, settings, visibility="private")
+    assert result.items[0]["path_with_namespace"] == "group/example"
+
+
+async def test_list_merge_requests_builds_url_and_shape(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v4/projects/group/example/merge_requests"
+        params = request.url.params
+        assert params["state"] == "opened"
+        assert params["order_by"] == "updated_at"
+        assert params["sort"] == "asc"
+        assert params["search"] == "trigger"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": 9001,
+                    "iid": 12,
+                    "title": "Add trigger",
+                    "description": "y" * 300,
+                    "state": "opened",
+                    "draft": True,
+                    "source_branch": "feature/trigger",
+                    "target_branch": "master",
+                    "web_url": "https://gitlab.cern.ch/group/example/-/merge_requests/12",
+                    "author": {"username": "bob"},
+                    "created_at": "2026-10-20T09:00:00Z",
+                    "updated_at": "2026-10-22T11:00:00Z",
+                    "merge_status": "can_be_merged",
+                }
+            ],
+        )
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    result = await gitlab.list_merge_requests(
+        client,
+        settings,
+        project="group/example",
+        order_by="updated_at",
+        sort="asc",
+        search="trigger",
+    )
+    item = result.items[0]
+    assert item["iid"] == 12
+    assert item["draft"] is True
+    assert item["source_branch"] == "feature/trigger"
+    assert item["author"] == "bob"
+    assert len(item["description_snippet"]) == 200
+    assert result.note == "state=opened project=group/example"
 
 
 async def test_get_project_merges_statistics_and_languages(tmp_path: Path) -> None:
@@ -289,6 +346,14 @@ async def test_invalid_scope_state_sort_raise_without_requests(tmp_path: Path) -
         await gitlab.search_issues(client, settings, search_term="x", state="maybe")
     with pytest.raises(InvalidInputError):
         await gitlab.list_tags(client, settings, project="42", sort="sideways")
+    with pytest.raises(InvalidInputError):
+        await gitlab.search_projects(client, settings, visibility="secret")
+    with pytest.raises(InvalidInputError):
+        await gitlab.list_merge_requests(client, settings, project="42", state="wip")
+    with pytest.raises(InvalidInputError):
+        await gitlab.list_merge_requests(client, settings, project="42", order_by="votes")
+    with pytest.raises(InvalidInputError):
+        await gitlab.list_merge_requests(client, settings, project="42", sort="sideways")
     assert recorder.requests == []
 
 

@@ -83,18 +83,23 @@ Public API; no service token needed.
 
 ## CERN GitLab tools (gitlab.cern.ch)
 
-GitLab API access does **not** use the CERN SSO browser session: the API ignores browser cookies for most endpoints, so a personal access token is required for anything beyond anonymous public data.
+GitLab API access does **not** use the CERN SSO browser session: two independent reasons.
+
+- The SSO sign-in flow never visits `gitlab.cern.ch`, so the stored session state never contains `_gitlab_session` (or any GitLab-scoped cookie). Verified: the persisted session holds cookies only for `auth.cern.ch`, `its.cern.ch`, `indico.cern.ch`, and `cmsonline.cern.ch`.
+- Even with a session cookie, the GitLab API ignores browser cookies for most endpoints; requests stay anonymous and private projects answer `404`.
 
 Facts about `CMCPS_GITLAB_TOKEN`:
 
 - Create the token at `gitlab.cern.ch` → Preferences → Personal access tokens (direct URL: `https://gitlab.cern.ch/-/user_settings/personal_access_tokens`) with the **`read_api`** scope.
 - Set it as the `CMCPS_GITLAB_TOKEN` environment variable; it is sent as the `PRIVATE-TOKEN` header and injected only by the trusted HTTP layer — never accepted as a tool argument, never logged.
-- Without it: public project search, repository trees, and public file contents work anonymously.
-- Required for: `gitlab_search_issues`, `gitlab_get_wiki`, private/internal projects, and code search (`gitlab_search_code` needs a token on CERN GitLab and advanced search for blobs).
+- Without it: public project search, repository trees, public merge-request lists, and public file contents work anonymously. Private projects answer `404` and never appear in search results.
+- Required for: `gitlab_search_issues`, `gitlab_get_wiki`, anything on private/internal projects (including `gitlab_list_merge_requests`), and code search (`gitlab_search_code` needs a token on CERN GitLab and advanced search for blobs).
+- `gitlab_search_projects` returns every project visible to the authenticated identity (public ones anonymously, internal/private ones with the token); pass `visibility` to restrict the listing.
 - `cern_auth_sign_in` is still required first (the SSO gate applies to every tool), but SSO alone never unlocks GitLab data — the token is the credential that matters.
 
-- `gitlab_search_projects` — public project search with language/topic filters.
+- `gitlab_search_projects` — project search with language/topic/visibility filters; authenticated identities also see internal/private projects they can access.
 - `gitlab_get_project` — project info including statistics and language breakdown.
+- `gitlab_list_merge_requests` — merge requests of one project, state/order filters.
 - `gitlab_list_files` — repository tree listing.
 - `gitlab_get_file` — file content (text decoded; binaries return a placeholder).
 - `gitlab_get_readme` — first README variant of a project.

@@ -1,8 +1,8 @@
 """Read-only adapter for gitlab.cern.ch.
 
-Covers the retained tools of the reference ``cerngitlab-mcp`` server: public
-project search, project detail, repository tree and file reads, README
-lookup, code / issue search, wikis, branches, releases, and tags via the
+Covers the retained tools of the reference ``cerngitlab-mcp`` server: project
+search, project detail, repository tree and file reads, README lookup, code /
+issue search, merge requests, wikis, branches, releases, and tags via the
 GitLab REST API v4. All interactions are GET-only.
 """
 
@@ -55,6 +55,9 @@ _README_FORMATS = {
 CODE_SCOPES = ("blobs", "filenames")
 ISSUE_STATES = ("opened", "closed", "all")
 TAG_SORTS = ("asc", "desc")
+VISIBILITIES = ("public", "internal", "private")
+MR_STATES = ("opened", "closed", "locked", "merged", "all")
+MR_ORDER_BY = ("created_at", "updated_at", "title", "merged_at")
 _NOT_FOUND = 404
 _MAX_PER_PAGE = 100
 
@@ -138,20 +141,27 @@ async def search_projects(
     query: str | None = None,
     language: str | None = None,
     topic: str | None = None,
+    visibility: str | None = None,
     sort_by: str = "last_activity_at",
     order: str = "desc",
     per_page: int = 20,
     page: int = 1,
 ) -> SearchResult:
-    """Search public projects on gitlab.cern.ch."""
+    """Search projects on gitlab.cern.ch visible to the authenticated identity."""
+    if visibility is not None and visibility not in VISIBILITIES:
+        raise InvalidInputError(
+            f"visibility must be one of {VISIBILITIES}, got {visibility!r}",
+            instructions="Use visibility='public', 'internal', or 'private'.",
+        )
     per_page = _clamp_per_page(per_page)
     params: dict[str, str | int] = {
-        "visibility": "public",
         "order_by": sort_by,
         "sort": order,
         "per_page": per_page,
         "page": page,
     }
+    if visibility:
+        params["visibility"] = visibility
     if query:
         params["search"] = query
     if language:
@@ -457,6 +467,82 @@ async def search_issues(
         page=page,
         query=search_term,
         note=f"state={state}" if project is None else f"state={state} project={project}",
+    )
+
+
+async def list_merge_requests(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    project: str,
+    state: str = "opened",
+    order_by: str = "created_at",
+    sort: str = "desc",
+    search: str | None = None,
+    per_page: int = 20,
+    page: int = 1,
+) -> SearchResult:
+    """List merge requests of one project."""
+    if state not in MR_STATES:
+        raise InvalidInputError(
+            f"state must be one of {MR_STATES}, got {state!r}",
+            instructions="Use state='opened', 'closed', 'locked', 'merged', or 'all'.",
+        )
+    if order_by not in MR_ORDER_BY:
+        raise InvalidInputError(
+            f"order_by must be one of {MR_ORDER_BY}, got {order_by!r}",
+            instructions="Use order_by='created_at', 'updated_at', 'title', or 'merged_at'.",
+        )
+    if sort not in TAG_SORTS:
+        raise InvalidInputError(
+            f"sort must be one of {TAG_SORTS}, got {sort!r}",
+            instructions="Use sort='asc' or sort='desc'.",
+        )
+    per_page = _clamp_per_page(per_page)
+    params: dict[str, str | int] = {
+        "state": state,
+        "order_by": order_by,
+        "sort": sort,
+        "per_page": per_page,
+        "page": page,
+    }
+    if search:
+        params["search"] = search
+    response = await client.request(
+        "GET",
+        _url(settings, f"/projects/{_project_key(project)}/merge_requests"),
+        params=params,
+        service_headers=_service_headers(settings),
+    )
+    data = json_body(response, source=SOURCE)
+    items = []
+    for merge_request in data:
+        description = merge_request.get("description") or ""
+        author = merge_request.get("author") or {}
+        items.append(
+            {
+                "id": merge_request.get("id"),
+                "iid": merge_request.get("iid"),
+                "title": merge_request.get("title"),
+                "description_snippet": description[:200],
+                "state": merge_request.get("state"),
+                "draft": bool(merge_request.get("draft", False)),
+                "source_branch": merge_request.get("source_branch"),
+                "target_branch": merge_request.get("target_branch"),
+                "web_url": merge_request.get("web_url"),
+                "author": author.get("username"),
+                "created_at": merge_request.get("created_at"),
+                "updated_at": merge_request.get("updated_at"),
+                "merge_status": merge_request.get("merge_status"),
+            }
+        )
+    return _page_result(
+        items,
+        per_page=per_page,
+        page=page,
+        query=search,
+        sort=f"{order_by}:{sort}",
+        note=f"state={state} project={project}",
     )
 
 
