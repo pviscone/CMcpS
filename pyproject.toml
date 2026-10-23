@@ -15,6 +15,7 @@ dependencies = [
   "playwright>=1.64",
   "pydantic>=2.11",
   "pydantic-settings>=2.11",
+  "pymupdf>=1.26,<2",
 ]
 
 [project.scripts]

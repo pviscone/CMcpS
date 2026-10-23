@@ -147,6 +147,11 @@ TWIKI_TOOLS = {
     "twiki_list_topics",
     "twiki_download_attachment",
 }
+PDFTOOLS_TOOLS = {
+    "pdf_probe_page",
+    "pdf_crop_figure",
+    "pdf_render_page",
+}
 CMSRESULTS_TOOLS = {
     "cmsresults_list_groups",
     "cmsresults_list_papers",
@@ -174,6 +179,7 @@ ALL_TOOLS = (
     | ELOG_TOOLS
     | CMSSEARCH_TOOLS
     | GLANCE_TOOLS
+    | PDFTOOLS_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
@@ -294,6 +300,9 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "cmsonline_elog_download_attachment": {
         "attachment_url": "https://cmsonline.cern.ch/Elog/htdocs/data/495/a.png"
     },
+    "pdf_probe_page": {"pdf_path": "paper.pdf", "page": 1},
+    "pdf_crop_figure": {"pdf_path": "paper.pdf", "page": 1, "bbox": [0, 0, 100, 100]},
+    "pdf_render_page": {"pdf_path": "paper.pdf", "page": 1},
 }
 
 

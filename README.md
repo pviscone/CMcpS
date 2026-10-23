@@ -274,6 +274,14 @@ Generic MkDocs (Material) reader: the site search index drives search/listing, p
 - `mkdocs_get_page` — one page as plain text (code/tables preserved).
 - `mkdocs_download_file` — bounded download of a static asset (plot/PDF/ROOT file) hosted on a docs site.
 
+## Local PDF figure tools (PyMuPDF, no network)
+
+Local post-processing for PDFs fetched with the `*_download_*` tools (or any local PDF): geometry probing to derive a crop box, vector-preserving cropping, and raster rendering for visual verification. No network I/O; outputs stay inside CMcpS download storage under the usual size caps. Pages are numbered from 1 (pdftotext convention).
+
+- `pdf_probe_page` — text blocks, embedded-image boxes, and union bounds of vector drawings for one page, plus combined `clip_hints`. Check `drawings_union` before cropping: dashed frames/plot axes can extend below the last text block.
+- `pdf_crop_figure` — crops one page region into a new single-page PDF via `show_pdf_page`, so drawings stay vector and text stays selectable (no rasterization). Optional plain `output_name`.
+- `pdf_render_page` — rasterizes a page or a clipped region to PNG for visual verification (`dpi` 1–600, default 150; re-render higher for pale figures before concluding they are empty).
+
 ## Configuration
 
 Configuration uses environment variables with the `CMCPS_` prefix. Common settings:
