@@ -46,6 +46,8 @@ DETAIL_HTML = """<html><body>
 <div id="content"><h1>Entry detail</h1>
 <pre class="messageprefull">Detailed body text of the entry, with magnets.</pre>
 <a href="/Elog/htdocs/data/495/1347902_1.png">attachment</a>
+<a href="/Elog/htdocs/struts/download.jsp?mid=1347902&amp;cid=425690&amp;\
+cont=image/jpeg&amp;fName=plot.jpg&amp;uid=862566">photo</a>
 </div>
 </body></html>"""
 
@@ -136,7 +138,11 @@ async def test_get_detail_dispatches_portlet(tmp_path: Path) -> None:
     result = await elog.get_detail(client, msg_id=1347902, sub_id=495)
     assert result["msg_id"] == 1347902
     assert "Detailed body text" in result["text"]
-    assert result["attachments"] == ["https://cmsonline.cern.ch/Elog/htdocs/data/495/1347902_1.png"]
+    assert result["attachments"] == [
+        "https://cmsonline.cern.ch/Elog/htdocs/data/495/1347902_1.png",
+        "https://cmsonline.cern.ch/Elog/htdocs/struts/download.jsp"
+        "?mid=1347902&cid=425690&cont=image/jpeg&fName=plot.jpg&uid=862566",
+    ]
 
 
 async def test_get_detail_rejects_bad_id(tmp_path: Path) -> None:
@@ -182,7 +188,11 @@ async def test_get_detail_recovers_via_render_fallback(
     result = await elog.get_detail(client, msg_id=1347902, sub_id=495)
     assert result["msg_id"] == 1347902
     assert "Detailed body text" in result["text"]
-    assert result["attachments"] == ["https://cmsonline.cern.ch/Elog/htdocs/data/495/1347902_1.png"]
+    assert result["attachments"] == [
+        "https://cmsonline.cern.ch/Elog/htdocs/data/495/1347902_1.png",
+        "https://cmsonline.cern.ch/Elog/htdocs/struts/download.jsp"
+        "?mid=1347902&cid=425690&cont=image/jpeg&fName=plot.jpg&uid=862566",
+    ]
     assert len(rendered_urls) == 1
     assert "viewMessageDetails.do" in rendered_urls[0]
 
@@ -225,3 +235,13 @@ async def test_download_attachment_writes_file(tmp_path: Path) -> None:
     )
     assert Path(result["path"]).read_bytes() == b"png"
     assert Path(result["path"]).parent == settings.download_dir
+
+    result = await elog.download_attachment(
+        client,
+        attachment_url=(
+            "https://cmsonline.cern.ch/Elog/htdocs/struts/download.jsp"
+            "?mid=1334353&cid=425697&cont=image/jpeg&fName=3567_tank.jpg&uid=862573"
+        ),
+    )
+    assert Path(result["path"]).name == "3567_tank.jpg"
+    assert Path(result["path"]).read_bytes() == b"png"

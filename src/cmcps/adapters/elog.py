@@ -18,7 +18,9 @@ proved these constraints:
 - Entry detail: GET portal page with
   ``_piref<pid>.strutsAction=/viewMessageDetails.do?msgId=..&subId=..``
   (the portlet id ``__adfpwp_action_portlet=N`` is read from the elog page).
-- Attachments referenced via ``/Elog/htdocs/data/<logId>/<file>`` paths.
+- Attachments referenced via ``/Elog/htdocs/data/<logId>/<file>`` paths or
+  served through ``/Elog/htdocs/struts/download.jsp?mid=..&cid=..&uid=..``
+  (filename in the ``fName`` query parameter).
 
 The portal POST path is the curated ``request_form_post`` allowlisted to
 ``cmsonline.cern.ch`` (read-only semantics; no state mutation). Detail GETs
@@ -29,10 +31,11 @@ portal answers with the SAML login form or its ADF loopback shell.
 from __future__ import annotations
 
 import re
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from cmcps.adapters.common import html_to_text, json_body
 from cmcps.contracts.errors import InvalidInputError, UpstreamError
@@ -51,6 +54,7 @@ _MAX_ENTRIES = 25
 _PORTLET_RE = re.compile(r"__adfpwp_action_portlet=(\d+)")
 _ENTRY_LINK_RE = re.compile(r"msgId%3D(\d+)%26subId%3D(\d+)")
 _ATTACHMENT_RE = re.compile(r"/Elog/htdocs/data/[^\"\s>]+")
+_ATTACHMENT_DL_RE = re.compile(r"/Elog/htdocs/struts/download\.jsp\?[^\"\s<>']+")
 
 _IMG_LINK = (
     '<img border="0" src="/Elog/htdocs/default/entry.png" alt="Entry" title="Entry" />&nbsp;'
@@ -277,7 +281,12 @@ async def get_detail(
             instructions="Call cern_auth_sign_in again to refresh the portal session.",
         )
     body_text = html_to_text(text, limit=20000)
-    attachments = sorted(set(_ATTACHMENT_RE.findall(text)))
+    attachments = sorted(
+        {
+            *(_ATTACHMENT_RE.findall(text)),
+            *(unescape(link) for link in _ATTACHMENT_DL_RE.findall(text)),
+        }
+    )
     return {
         "source": SOURCE,
         "msg_id": int(msg_id),
@@ -328,7 +337,8 @@ async def download_attachment(client: SafeHttpClient, *, attachment_url: str) ->
             "elog attachments must live under cmsonline.cern.ch/Elog/",
             instructions="Use an attachment URL from cmsonline_elog_get_detail.",
         )
-    filename = parts.path.rsplit("/", 1)[-1] or None
+    query = parse_qs(parts.query)
+    filename = (query.get("fName") or [None])[0] or parts.path.rsplit("/", 1)[-1] or None
     final = await client.download(attachment_url.strip(), Path(filename) if filename else None)
     return {
         "source": SOURCE,

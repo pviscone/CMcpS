@@ -165,7 +165,7 @@ The portal's ELog portlet proxies a DataTables JSON backend at `POST /Elog/json.
 - `cmsonline_elog_search` — full-text search (text/subject/author, date range, optional logbook `sub_id`; empty searches all logbooks). Paging via `offset`.
 - `cmsonline_elog_get_detail` — full entry by `msg_id` (body text + attachment links).
 - `cmsonline_elog_list_logbooks` — E-Log tree ids (`cat_id`/`sub_id`) for scoping searches.
-- `cmsonline_elog_download_attachment` — bounded download of `/Elog/htdocs/data/...` attachments.
+- `cmsonline_elog_download_attachment` — bounded download of `/Elog/htdocs/data/...` or `/Elog/htdocs/struts/download.jsp?...` attachments (saved under the `fName` filename when present).
 
 ## CERN Jira tools (its.cern.ch/jira)
 
