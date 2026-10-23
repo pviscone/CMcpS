@@ -45,7 +45,7 @@ def register_adapter_tools(
     register_cmsonline_tools(server, settings, auth, http)
     register_jira_tools(server, settings, auth, http)
     register_mcm_tools(server, settings, auth, http)
-    register_das_tools(server, settings, auth, http)
+    register_das_tools(server, settings)
     register_gocms_tools(server, settings, auth, http)
     register_cmssdt_tools(server, settings, auth, http)
     register_xsdb_tools(server, settings, auth, http)

@@ -25,6 +25,18 @@ def failure(exc: Exception) -> ToolEnvelope:
     )
 
 
+async def enveloped(call: Callable[[], Awaitable[BaseModel | dict[str, Any]]]) -> ToolEnvelope:
+    """Run an adapter call with the uniform envelope but without the SSO guard.
+
+    For tools authenticated by something other than the CERN SSO session
+    (for example the DAS tools, which use a local grid client certificate).
+    """
+    try:
+        return ToolEnvelope.success(await call())
+    except Exception as exc:
+        return failure(exc)
+
+
 async def guarded(
     auth: AuthService,
     call: Callable[[], Awaitable[BaseModel | dict[str, Any]]],

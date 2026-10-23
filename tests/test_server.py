@@ -252,8 +252,8 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "mcm_get_status_and_approval": {"prepid": "B2G-RunIISummer20UL17wmLHEGEN-00001"},
     "mcm_get_output_datasets": {"prepid": "B2G-RunIISummer20UL17wmLHEGEN-00001"},
     "mcm_find_producing_requests": {"dataset": "/TTbar/SIM-v1/AODSIM"},
-    "das_search": {"query": "dataset=/TT*/RunII*/AODSIM"},
-    "das_get_dataset_info": {"dataset": "/TTbar/SIM-v1/AODSIM"},
+    # das_search / das_get_dataset_info are intentionally absent: they are not
+    # SSO-gated (grid client-certificate auth via dasgoclient).
     "gocms_list_links": {},
     "gocms_get_link": {"link_id": 1},
     "gocms_list_tags": {},
@@ -341,6 +341,28 @@ async def test_adapter_tools_are_auth_gated(settings: Settings, tool_name: str) 
     assert payload["status"] == "error"
     assert payload["error"]["code"] == "AUTH_REQUIRED"
     assert "cern_auth_sign_in" in payload["error"]["instructions"]
+
+
+async def test_das_tools_are_not_sso_gated(tmp_path) -> None:
+    """DAS tools must fail on their grid-credential preflight, never with AUTH_REQUIRED."""
+    settings = Settings(
+        state_dir=tmp_path,
+        browser_executable=None,
+        dasgoclient_path="/nonexistent/no-such-dasgoclient",
+        grid_cert_file=tmp_path / "no-cert.pem",
+        grid_key_file=tmp_path / "no-key.pem",
+    )
+    server = build_server(settings)
+    for tool_name, args in (
+        ("das_search", {"query": "dataset=/X/Y/Z"}),
+        ("das_get_dataset_info", {"dataset": "/X/Y/Z"}),
+    ):
+        result = await server.call_tool(tool_name, args)
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["status"] == "error"
+        assert payload["error"]["code"] != "AUTH_REQUIRED"
+        assert payload["error"]["code"] == "UPSTREAM_ERROR"
 
 
 async def test_explicit_bypass_makes_health_ok(tmp_path) -> None:

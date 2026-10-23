@@ -206,9 +206,9 @@ McM's own **public REST API index** (`/mcm/public/restapi/`) requires no SSO. Fu
 
 ## CMS DAS tools (cmsweb.cern.ch/das)
 
-DAS QL over `/das/request`. cmsweb is SSO-fronted (SSO session required); 429s are retryable.
+DAS QL via the local `dasgoclient` CLI (`dasgoclient -json`), spawned per call with a timeout and output cap. Auth is a **grid client certificate**, not the SSO session: the runner injects `X509_USER_CERT`/`X509_USER_KEY` from `CMCPS_GRID_CERT_FILE`/`CMCPS_GRID_KEY_FILE` (default `~/.globus/usercert.pem`/`userkey.pem`; a plain `voms-proxy-init` proxy also works). Locate the binary via `CMCPS_DASGOCLIENT_PATH` if it is not on PATH. These two tools are intentionally *not* behind the CERN SSO guard.
 
-- `das_search` — DAS QL: `dataset=/TT*/RunII*/AODSIM`, `block`, `site`, `file`, `run`, `lumi`. Offset paging (`idx`), limit ≤ 50, rows deduplicated per replica.
+- `das_search` — DAS QL: `dataset=/TT*/RunII*/AODSIM`, `block`, `site`, `file`, `run`, `lumi`. Offset paging (`idx`), limit ≤ 50, rows deduplicated per replica; `has_more` from a limit+1 probe (`-json` has no `nresults`, so `total_count` is null).
 - `das_get_dataset_info` — exact dataset attribute record (no wildcards).
 
 ## goCMS tools (gocms.cern.ch)

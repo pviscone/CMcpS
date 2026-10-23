@@ -1,42 +1,101 @@
 """Read-only adapter for CMS Data Aggregation System (cmsweb.cern.ch/das).
 
-Endpoint type: DAS REST API (documented at
-https://github.com/dmwm/DAS):
+Backend: the ``dasgoclient`` CLI (https://github.com/dmwm/das2go). The
+cmsweb DAS endpoint presents a CERN Grid CA certificate (not in public
+bundles) and authenticates via GSI client certificates, so this adapter
+spawns ``dasgoclient -json`` through :mod:`cmcps.net.proc` instead of the
+SSO-cookie HTTP client. Auth comes from a local grid credential:
+``X509_USER_CERT``/``X509_USER_KEY`` are injected from Settings
+(``grid_cert_file``/``grid_key_file``, default ``~/.globus``).
 
-- ``GET /das/request?view=list&limit=..&idx=..&input=<DAS QL>&instance=...``
-  — one endpoint for every query; DAS QL examples:
-  ``dataset=/TT*/RunII*/AODSIM``, ``dataset dataset=/X/Y/Z``,
-  ``site site=T2_CH_CERN``, ``file file=...``, ``block block=...``.
-  Anonymous probing returns ``401`` — cmsweb is fronted by CERN SSO; the
-  shared client injects the session cookies.
-- Response: ``{"status", "mongo_query", "nresults", "timestamp", "data"}``
-  where ``data[i]`` is a dict whose key is the entity name
-  (``dataset``/``block``/``file``/``site``/``run``/``lumi``/``summary``) and
-  whose value is a list of attribute dicts. Duplicate rows arrive per
-  replica; the adapter deduplicates on the primary key (``name``).
+Queries: DAS QL, e.g. ``dataset=/TT*/RunII*/AODSIM``,
+``dataset dataset=/X/Y/Z``, ``site site=T2_CH_CERN``, ``file file=...``,
+``run run=379611``. ``instance`` (default ``prod/global``) is appended to
+the query string.
 
-Limits: 429 responses are treated as retryable upstream errors; ``limit``
-is capped at 50 per call (DAS throttles aggressively), ``idx`` is the
-offset for paging.
+Output: ``-json`` returns a JSON array of records shaped
+``{"das": {...}, "<entity>": [{...}], "qhash": ...}``; the adapter lifts
+the entity's first attribute dict per record and deduplicates on the
+primary key (``name``; replicas repeat rows). ``limit`` is capped at 50
+and a ``limit+1`` probe drives ``has_more``; ``idx`` is the page offset.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import re
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
-from cmcps.adapters.common import json_body
+from cmcps.config.settings import Settings
 from cmcps.contracts.errors import InvalidInputError, UpstreamError
 from cmcps.contracts.results import SearchResult
-from cmcps.net.client import SafeHttpClient
+from cmcps.net.proc import CommandResult, run_command
 
 SOURCE = "das"
 
-BASE = "https://cmsweb.cern.ch/das/request"
-
 _MAX_LIMIT = 50
+_META_KEYS = frozenset({"das", "qhash"})
 _DATASET_RE = re.compile(r"^/?[A-Za-z0-9_*][A-Za-z0-9_.*~-]*/[^/]+/[A-Za-z0-9_*-]+/?$")
 _UNSAFE_QL_RE = re.compile(r"[;`'\"$]")
+_QL_ERROR_MARKERS = ("DAS QL ERROR", "Not a DAS key")
+
+
+@dataclass(frozen=True, slots=True)
+class DasGoRunner:
+    """Bound ``dasgoclient`` invocation configured from Settings."""
+
+    binary: str
+    env: Mapping[str, str]
+    timeout_seconds: float
+    max_output_bytes: int
+
+    async def __call__(self, argv: Sequence[str]) -> CommandResult:
+        return await run_command(
+            [self.binary, *argv],
+            env=self.env,
+            timeout_seconds=self.timeout_seconds,
+            max_output_bytes=self.max_output_bytes,
+        )
+
+
+def make_runner(settings: Settings) -> Callable[[Sequence[str]], Awaitable[CommandResult]]:
+    """Resolve the dasgoclient binary and grid credentials from Settings."""
+    binary = settings.dasgoclient_path
+    if not binary:
+        raise UpstreamError(
+            "dasgoclient is not available",
+            instructions=(
+                "Install dasgoclient (https://github.com/dmwm/das2go) or set "
+                "CMCPS_DASGOCLIENT_PATH to its absolute path."
+            ),
+        )
+    cert = settings.grid_cert_file
+    key = settings.grid_key_file
+    for credential in (cert, key):
+        if not credential.is_file() or not os.access(credential, os.R_OK):
+            raise UpstreamError(
+                f"grid credential is not readable: {credential}",
+                instructions=(
+                    "Point CMCPS_GRID_CERT_FILE/CMCPS_GRID_KEY_FILE at a valid "
+                    "grid user certificate and key (default ~/.globus), or run "
+                    "voms-proxy-init and set them to the proxy."
+                ),
+            )
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": os.environ.get("HOME", str(settings.state_dir)),
+        "X509_USER_CERT": str(cert),
+        "X509_USER_KEY": str(key),
+    }
+    return DasGoRunner(
+        binary=binary,
+        env=env,
+        timeout_seconds=settings.request_timeout_seconds,
+        max_output_bytes=settings.max_response_bytes,
+    )
 
 
 def _check_query(query: str) -> str:
@@ -54,8 +113,65 @@ def _check_query(query: str) -> str:
     return cleaned
 
 
+def _parse_records(payload: bytes) -> list[dict[str, Any]]:
+    try:
+        records = json.loads(payload)
+    except ValueError as exc:
+        raise UpstreamError(
+            "dasgoclient did not return JSON",
+            instructions="Retry with -json output; report if it persists.",
+        ) from exc
+    if not isinstance(records, list):
+        raise UpstreamError(
+            "dasgoclient returned an unexpected JSON shape",
+            instructions="Expected a JSON array of DAS records.",
+        )
+    items: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        entities = {key: value for key, value in record.items() if key not in _META_KEYS}
+        if not entities:
+            continue
+        entity, values = next(iter(entities.items()))
+        attrs = values[0] if isinstance(values, list) and values else values
+        if isinstance(attrs, dict):
+            items.append({"entity": entity, **attrs})
+    return items
+
+
+def _check_exit(result: CommandResult) -> None:
+    if result.exit_code == 0:
+        return
+    stderr = result.stderr.decode(errors="replace")
+    # dasgoclient writes QL parse errors to stderr (exit 17) but pattern
+    # validation errors to stdout (exit 18); scan both.
+    output = stderr + result.stdout.decode(errors="replace")
+    detail = (stderr.strip() or output.strip())
+    detail = detail.splitlines()[0][:200] if detail else f"exit code {result.exit_code}"
+    if any(marker in output for marker in _QL_ERROR_MARKERS):
+        raise InvalidInputError(
+            f"das rejected the query: {detail}",
+            instructions="Check the DAS QL syntax, e.g. dataset=/TT*/RunII*/AODSIM.",
+        )
+    if "Validation error" in output:
+        raise InvalidInputError(
+            f"dasgoclient rejected the pattern: {detail}",
+            instructions=(
+                "dasgoclient is stricter than the DAS web form for wildcards "
+                "(e.g. use /Primary*/*Processed*/*Tier); rephrase the query."
+            ),
+        )
+    err = UpstreamError(
+        f"dasgoclient failed: {detail}",
+        instructions="Retry; check X509 grid credentials if the error mentions auth.",
+    )
+    err.retryable = True
+    raise err
+
+
 async def search(
-    client: SafeHttpClient,
+    runner: Callable[[Sequence[str]], Awaitable[CommandResult]],
     *,
     query: str,
     limit: int = 10,
@@ -76,55 +192,47 @@ async def search(
             f"invalid DAS instance {instance!r}",
             instructions="Common values: prod/global, prod/phys01, prod/phys02, prod/phys03.",
         )
-    response = await client.request(
-        "GET",
-        BASE,
-        params={
-            "view": "list",
-            "limit": limit,
-            "idx": offset,
-            "input": ql,
-            "instance": instance,
-        },
+    full_query = f"{ql} instance={instance}"
+    result = await runner(
+        [
+            "-query",
+            full_query,
+            "-json",
+            "-limit",
+            str(limit + 1),  # +1 probe for has_more; -json has no nresults
+            "-idx",
+            str(offset),
+        ]
     )
-    payload = json_body(response, source="das")
-    if not isinstance(payload, dict):
-        raise UpstreamError(
-            "das returned a non-object payload",
-            instructions="The query may be malformed; DAS errors are string responses.",
-        )
-    rows = payload.get("data") or []
+    _check_exit(result)
+    records = _parse_records(result.stdout)
+    has_more = len(records) > limit
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for row in rows:
-        if not isinstance(row, dict) or not row:
-            continue
-        entity, values = next(iter(row.items()))
-        attrs = values[0] if isinstance(values, list) and values else values
-        if not isinstance(attrs, dict):
-            continue
-        name = attrs.get("name") or attrs.get("block_name") or attrs.get("file")
-        key = f"{entity}:{name}"
+    for item in records[: limit + 1]:
+        name = item.get("name") or item.get("block_name") or item.get("file")
+        key = f"{item['entity']}:{name}"
         if name is not None and key in seen:
             continue
         seen.add(key)
-        items.append({"entity": entity, **attrs})
-    nresults = payload.get("nresults")
+        if len(items) < limit:
+            items.append(item)
     return SearchResult(
         source=SOURCE,
         query=f"[{instance}] {ql}",
         items=items,
-        total_count=nresults if isinstance(nresults, int) else None,
+        total_count=None,
         page=(offset // limit) + 1,
         size=len(items),
-        has_more=isinstance(nresults, int) and offset + len(items) < nresults,
+        has_more=has_more,
         note="Rows are deduplicated per replica. Entities: dataset, block, "
-        "file, site, run, lumi, summary.",
+        "file, site, run, lumi, summary. total_count is None: dasgoclient "
+        "-json has no nresults; has_more comes from a limit+1 probe.",
     )
 
 
 async def get_dataset_info(
-    client: SafeHttpClient,
+    runner: Callable[[Sequence[str]], Awaitable[CommandResult]],
     *,
     dataset: str,
 ) -> dict[str, Any]:
@@ -138,7 +246,7 @@ async def get_dataset_info(
     if not cleaned.startswith("/"):
         cleaned = f"/{cleaned}"
     result = await search(
-        client, query=f"dataset={cleaned}", limit=_MAX_LIMIT, instance="prod/global"
+        runner, query=f"dataset={cleaned}", limit=_MAX_LIMIT, instance="prod/global"
     )
     if not result.items:
         raise UpstreamError(

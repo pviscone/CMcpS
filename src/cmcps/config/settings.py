@@ -38,6 +38,10 @@ def _default_browser_executable() -> str | None:
     return None
 
 
+def _default_dasgoclient() -> str | None:
+    return shutil.which("dasgoclient")
+
+
 class Settings(BaseSettings):
     """Environment-backed settings.
 
@@ -97,6 +101,11 @@ class Settings(BaseSettings):
     glance_membership_app_url: str = "https://cmsfence.cern.ch/membership"
     glance_alcm_token: str | None = None
     glance_membership_token: str | None = None
+    # DAS: serviced by the dasgoclient CLI (GSI client-certificate auth), not
+    # by the SSO-cookie HTTP client. cert/key default to ~/.globus.
+    dasgoclient_path: str | None = Field(default_factory=_default_dasgoclient)
+    grid_cert_file: Path = Field(default_factory=lambda: Path.home() / ".globus" / "usercert.pem")
+    grid_key_file: Path = Field(default_factory=lambda: Path.home() / ".globus" / "userkey.pem")
 
     @property
     def session_path(self) -> Path:

@@ -1,139 +1,191 @@
-"""Fixture-driven contract tests for the CMS DAS adapter."""
+"""Contract tests for the dasgoclient-backed DAS adapter."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import json
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
-import httpx
 import pytest
 
 from cmcps.adapters import das
-from cmcps.auth.service import AuthService
 from cmcps.config.settings import Settings
 from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmcps.net.proc import CommandResult
 
-Handler = Callable[[httpx.Request], httpx.Response]
+FakeRunner = Callable[[Sequence[str]], Awaitable[CommandResult]]
 
-DAS_PAYLOAD = {
-    "status": "ok",
-    "nresults": 137,
-    "timestamp": 1700000000.0,
-    "mongo_query": {},
-    "data": [
-        {
-            "dataset": [
-                {
-                    "name": "/TTbar/RunIISummer20UL17SIM-v1/SIM",
-                    "nevents": 1000000,
-                    "nfiles": 50,
-                    "datatype": "mc",
-                }
-            ]
-        },
-        {
-            "dataset": [
-                {
-                    "name": "/TTbar/RunIISummer20UL17SIM-v1/SIM",
-                    "nevents": 1000000,
-                    "nfiles": 50,
-                    "datatype": "mc",
-                }
-            ]
-        },  # replica duplicate
-        {"site": [{"name": "T2_CH_CERN", "kind": "Disk"}]},
-    ],
-}
+DATASET = "/DYToLL_M-50_TuneCP5_14TeV-pythia8/Campaign-v1/MINIAODSIM"
 
 
-class Recorder:
-    """Mock-transport handler that records every request."""
-
-    def __init__(self, handler: Handler) -> None:
-        self.requests: list[httpx.Request] = []
-        self._handler = handler
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        return self._handler(request)
+def _record(entity: str, attrs: dict) -> dict:
+    return {"das": {"instance": "prod/global"}, "qhash": "x", entity: [attrs]}
 
 
-def make_client(tmp_path: Path, recorder: Recorder) -> SafeHttpClient:
-    settings = Settings(state_dir=tmp_path, require_sso=False, browser_executable=None)
-    auth = AuthService(settings)
-    transport = httpx.MockTransport(recorder)
-    return SafeHttpClient(
-        settings, auth_service=auth, client=httpx.AsyncClient(transport=transport)
-    )
+def make_runner(
+    payload: list[dict], *, expect_limit: str | None = None
+) -> tuple[FakeRunner, list[list[str]]]:
+    """Runner stub returning canned -json stdout; records argv per call."""
+    calls: list[list[str]] = []
+
+    async def run(argv: Sequence[str]) -> CommandResult:
+        calls.append(list(argv))
+        if expect_limit is not None:
+            idx = argv.index("-limit") + 1
+            assert argv[idx] == expect_limit
+        return CommandResult(exit_code=0, stdout=json.dumps(payload).encode(), stderr=b"")
+
+    return run, calls
 
 
-async def test_search_builds_das_params(tmp_path: Path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        params = request.url.params
-        assert params["view"] == "list"
-        assert params["input"] == "dataset=/TTbar/*/SIM"
-        assert params["idx"] == "10"
-        assert params["instance"] == "prod/global"
-        return httpx.Response(200, json=DAS_PAYLOAD)
+async def test_search_builds_dasgoclient_argv() -> None:
+    runner, calls = make_runner([], expect_limit="4")
+    await das.search(runner, query="dataset=/TT*/RunII*/AODSIM", limit=3, offset=50)
+    argv = calls[0]
+    assert argv[:1] == ["-query"]
+    assert argv[1] == "dataset=/TT*/RunII*/AODSIM instance=prod/global"
+    assert "-json" in argv
+    assert argv[argv.index("-idx") + 1] == "50"
 
-    recorder = Recorder(handler)
-    client = make_client(tmp_path, recorder)
-    result = await das.search(client, query="dataset=/TTbar/*/SIM", offset=10)
-    assert result.total_count == 137
+
+async def test_search_parses_records_and_dedups() -> None:
+    payload = [
+        _record("dataset", {"name": DATASET, "nevents": 100}),
+        _record("dataset", {"name": DATASET, "nevents": 100}),  # replica duplicate
+        _record("site", {"name": "T2_CH_CERN"}),
+    ]
+    runner, _ = make_runner(payload)
+    result = await das.search(runner, query="dataset=/X/*/Y", limit=10)
+    assert result.size == 2
+    assert [item["entity"] for item in result.items] == ["dataset", "site"]
+    assert result.items[0]["name"] == DATASET
+    assert result.total_count is None
+    assert result.has_more is False
+    assert result.query == "[prod/global] dataset=/X/*/Y"
+
+
+async def test_search_has_more_from_limit_plus_one_probe() -> None:
+    payload = [_record("dataset", {"name": f"/A{i}/B/C"}) for i in range(4)]
+    runner, _ = make_runner(payload, expect_limit="4")
+    result = await das.search(runner, query="dataset=/A*/B/C", limit=3)
+    assert result.size == 3
     assert result.has_more is True
-    assert result.size == 2  # duplicate dataset row collapsed
-    names = [i["name"] for i in result.items]
-    assert names.count("/TTbar/RunIISummer20UL17SIM-v1/SIM") == 1
-    assert result.items[0]["entity"] == "dataset"
-    assert result.items[1]["entity"] == "site"
 
 
-async def test_search_rejects_bad_args(tmp_path: Path) -> None:
-    recorder = Recorder(lambda _r: httpx.Response(200, json={}))
-    client = make_client(tmp_path, recorder)
+async def test_search_rejects_bad_args_without_running() -> None:
+    runner, calls = make_runner([])
     with pytest.raises(InvalidInputError):
-        await das.search(client, query="   ")
+        await das.search(runner, query="")
     with pytest.raises(InvalidInputError):
-        await das.search(client, query="dataset=/X/Y/Z; DROP TABLE")
+        await das.search(runner, query="dataset=/X;rm -rf/Y/Z")
     with pytest.raises(InvalidInputError):
-        await das.search(client, query="dataset=/X/Y/Z", limit=0)
+        await das.search(runner, query="dataset=/X/Y/Z", limit=0)
     with pytest.raises(InvalidInputError):
-        await das.search(client, query="dataset=/X/Y/Z", instance="evil host")
-    assert recorder.requests == []
+        await das.search(runner, query="dataset=/X/Y/Z", limit=51)
+    with pytest.raises(InvalidInputError):
+        await das.search(runner, query="dataset=/X/Y/Z", offset=-1)
+    with pytest.raises(InvalidInputError):
+        await das.search(runner, query="dataset=/X/Y/Z", instance="prod/global evil")
+    assert calls == []
 
 
-async def test_get_dataset_info_exact_match(tmp_path: Path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["input"] == "dataset=/TTbar/RunIISummer20UL17SIM-v1/SIM"
-        return httpx.Response(200, json=DAS_PAYLOAD)
+async def test_search_ql_error_maps_invalid_input() -> None:
+    async def run(_argv: Sequence[str]) -> CommandResult:
+        stderr = b"ERROR DAS QL ERROR, msg=Not a DAS key"
+        return CommandResult(exit_code=17, stdout=b"", stderr=stderr)
 
-    recorder = Recorder(handler)
-    client = make_client(tmp_path, recorder)
-    result = await das.get_dataset_info(client, dataset="/TTbar/RunIISummer20UL17SIM-v1/SIM")
-    assert result["name"] == "/TTbar/RunIISummer20UL17SIM-v1/SIM"
-    assert result["nevents"] == 1000000
+    with pytest.raises(InvalidInputError):
+        await das.search(run, query="bogus")
+
+
+async def test_search_validation_error_on_stdout_maps_invalid_input() -> None:
+    """dasgoclient emits pattern validation errors on stdout (exit 18), not stderr."""
+    async def run(_argv: Sequence[str]) -> CommandResult:
+        return CommandResult(
+            exit_code=18, stdout=b"Validation error: unmatched dataset pattern", stderr=b""
+        )
+
+    with pytest.raises(InvalidInputError):
+        await das.search(run, query="dataset=/DYToEE*Phase2*/*")
+
+
+async def test_search_nonzero_exit_maps_upstream() -> None:
+    async def run(_argv: Sequence[str]) -> CommandResult:
+        return CommandResult(exit_code=2, stdout=b"", stderr=b"panic: boom")
+
+    with pytest.raises(UpstreamError):
+        await das.search(run, query="dataset=/X/Y/Z")
+
+
+async def test_search_non_json_maps_upstream() -> None:
+    async def run(_argv: Sequence[str]) -> CommandResult:
+        return CommandResult(exit_code=0, stdout=b"<html>ui</html>", stderr=b"")
+
+    with pytest.raises(UpstreamError):
+        await das.search(run, query="dataset=/X/Y/Z")
+
+
+async def test_get_dataset_info_exact_match() -> None:
+    payload = [_record("dataset", {"name": DATASET, "datatype": "mc"})]
+    runner, calls = make_runner(payload)
+    result = await das.get_dataset_info(runner, dataset=DATASET)
     assert result["datatype"] == "mc"
+    assert result["source"] == "das"
+    assert result["url"] == f"https://cmsweb.cern.ch/das/request?input=dataset%3D{DATASET}"
+    argv_query = calls[0][1]
+    assert argv_query == f"dataset={DATASET} instance=prod/global"
 
 
-async def test_get_dataset_info_rejects_wildcards(tmp_path: Path) -> None:
-    recorder = Recorder(lambda _r: httpx.Response(200, json={}))
-    client = make_client(tmp_path, recorder)
+async def test_get_dataset_info_rejects_wildcards_without_running() -> None:
+    runner, calls = make_runner([])
     with pytest.raises(InvalidInputError):
-        await das.get_dataset_info(client, dataset="/TT*/RunII*/AODSIM")
-    assert recorder.requests == []
+        await das.get_dataset_info(runner, dataset="/TT*/X/Y")
+    with pytest.raises(InvalidInputError):
+        await das.get_dataset_info(runner, dataset="/only/two")
+    assert calls == []
 
 
-async def test_get_dataset_info_missing_raises(tmp_path: Path) -> None:
-    payload = {"data": [], "nresults": 0}
-    recorder = Recorder(lambda _r: httpx.Response(200, json=payload))
-    client = make_client(tmp_path, recorder)
+async def test_get_dataset_info_missing_raises() -> None:
+    runner, _ = make_runner([])
     with pytest.raises(UpstreamError):
-        await das.get_dataset_info(client, dataset="/NoSuch/Thing-v1/NONE")
+        await das.get_dataset_info(runner, dataset="/NoSuch/Thing-v1/NONE")
 
 
-async def test_search_401_maps_upstream(tmp_path: Path) -> None:
-    recorder = Recorder(lambda _r: httpx.Response(401, text="Unauthorized"))
-    client = make_client(tmp_path, recorder)
-    with pytest.raises(UpstreamError):
-        await das.search(client, query="dataset=/X/Y/Z")
+def test_make_runner_requires_binary(tmp_path: Path) -> None:
+    settings = Settings(
+        state_dir=tmp_path,
+        browser_executable=None,
+        dasgoclient_path=None,
+    )
+    with pytest.raises(UpstreamError, match="dasgoclient is not available"):
+        das.make_runner(settings)
+
+
+def test_make_runner_requires_credentials(tmp_path: Path) -> None:
+    settings = Settings(
+        state_dir=tmp_path,
+        browser_executable=None,
+        dasgoclient_path="/bin/true",
+        grid_cert_file=tmp_path / "missing-cert.pem",
+        grid_key_file=tmp_path / "missing-key.pem",
+    )
+    with pytest.raises(UpstreamError, match="grid credential is not readable"):
+        das.make_runner(settings)
+
+
+def test_make_runner_binds_env(tmp_path: Path) -> None:
+    cert, key = tmp_path / "usercert.pem", tmp_path / "userkey.pem"
+    cert.write_text("cert")
+    key.write_text("key")
+    settings = Settings(
+        state_dir=tmp_path,
+        browser_executable=None,
+        dasgoclient_path="/bin/true",
+        grid_cert_file=cert,
+        grid_key_file=key,
+    )
+    runner = das.make_runner(settings)
+    assert isinstance(runner, das.DasGoRunner)
+    assert runner.binary == "/bin/true"
+    assert runner.env["X509_USER_CERT"] == str(cert)
+    assert runner.env["X509_USER_KEY"] == str(key)
