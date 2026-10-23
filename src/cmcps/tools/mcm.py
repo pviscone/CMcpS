@@ -8,20 +8,18 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from cmcps.adapters import mcm
-from cmcps.auth.service import AuthService
 from cmcps.config.settings import Settings
 from cmcps.contracts.results import ToolEnvelope
 from cmcps.net.client import SafeHttpClient
-from cmcps.tools.common import guarded
+from cmcps.tools.common import enveloped
 
 
 def register_mcm_tools(
     server: MCPServer,
     _settings: Settings,
-    auth: AuthService,
     http: SafeHttpClient,
 ) -> None:
-    """Register the read-only McM public-API tools."""
+    """Register the read-only McM public-API tools (anonymous, no SSO)."""
 
     @server.tool(
         name="mcm_get_request",
@@ -47,7 +45,7 @@ def register_mcm_tools(
         ],
     ) -> ToolEnvelope:
         """McM request detail."""
-        return await guarded(auth, lambda: mcm.get_request(http, request_id=request_id))
+        return await enveloped(lambda: mcm.get_request(http, request_id=request_id))
 
     @server.tool(
         name="mcm_get_status_and_approval",
@@ -70,7 +68,7 @@ def register_mcm_tools(
         ],
     ) -> ToolEnvelope:
         """McM status/approval."""
-        return await guarded(auth, lambda: mcm.get_status_and_approval(http, prepid=prepid))
+        return await enveloped(lambda: mcm.get_status_and_approval(http, prepid=prepid))
 
     @server.tool(
         name="mcm_get_output_datasets",
@@ -92,7 +90,7 @@ def register_mcm_tools(
         ],
     ) -> ToolEnvelope:
         """McM output datasets."""
-        return await guarded(auth, lambda: mcm.get_output_datasets(http, prepid=prepid))
+        return await enveloped(lambda: mcm.get_output_datasets(http, prepid=prepid))
 
     @server.tool(
         name="mcm_find_producing_requests",
@@ -105,4 +103,4 @@ def register_mcm_tools(
     )
     async def mcm_find_producing_requests(dataset: str) -> ToolEnvelope:
         """Dataset → producing request lookup."""
-        return await guarded(auth, lambda: mcm.find_producing_requests(http, dataset=dataset))
+        return await enveloped(lambda: mcm.find_producing_requests(http, dataset=dataset))

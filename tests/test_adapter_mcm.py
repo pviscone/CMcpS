@@ -126,6 +126,39 @@ async def test_produces_empty_is_no_results(tmp_path: Path) -> None:
     assert result.items == []
 
 
+async def test_adapter_calls_need_no_sso_session(tmp_path: Path) -> None:
+    """McM hits a public API: all four calls must work with require_sso on and no session."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if "/requests/get_status_and_approval/" in path:
+            return httpx.Response(200, json={"B2G-00001": "submit-done"})
+        if "/requests/output/" in path:
+            return httpx.Response(200, json={"B2G-00001": ["/TT/x/AODSIM"]})
+        if "/requests/produces/" in path:
+            return httpx.Response(200, json={"results": REQ_DOC})
+        return httpx.Response(200, json={"results": REQ_DOC})
+
+    recorder = Recorder(handler)
+    settings = Settings(state_dir=tmp_path, require_sso=True, browser_executable=None)
+    auth = AuthService(settings)
+    client = SafeHttpClient(
+        settings,
+        auth_service=auth,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(recorder)),
+    )
+    request = await mcm.get_request(client, request_id="B2G-00001")
+    assert request["request_id"] == "B2G-RunIISummer20UL17wmLHEGEN-00001"
+    status = await mcm.get_status_and_approval(client, prepid="B2G-00001")
+    assert status["approval_status"] == "submit-done"
+    output = await mcm.get_output_datasets(client, prepid="B2G-00001")
+    assert output["datasets"] == ["/TT/x/AODSIM"]
+    producing = await mcm.find_producing_requests(client, dataset="/TT/bar/AODSIM")
+    assert producing.total_count == 1
+    assert len(recorder.requests) == 4
+    assert all("Cookie" not in r.headers for r in recorder.requests)
+
+
 async def test_produces_rejects_malformed_dataset(tmp_path: Path) -> None:
     recorder = Recorder(lambda _r: httpx.Response(200, json={}))
     client = make_client(tmp_path, recorder)

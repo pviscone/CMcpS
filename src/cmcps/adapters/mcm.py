@@ -66,7 +66,8 @@ def _check_dataset(dataset: str) -> str:
 
 
 async def _get_json(client: SafeHttpClient, path: str, *, source: str) -> dict[str, Any]:
-    response = await client.request("GET", f"{BASE}/{path}")
+    # Public REST API (no SSO): never gate on or inject the CERN SSO session.
+    response = await client.request("GET", f"{BASE}/{path}", authenticated=False)
     payload = json_body(response, source=source)
     if not isinstance(payload, dict):
         raise UpstreamError(

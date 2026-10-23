@@ -248,12 +248,9 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "jira_search": {"jql": "project = CMSTRACK"},
     "jira_get_issue": {"issue_key": "CMSTRACK-1"},
     "jira_get_project": {"project_key": "CMSTRACK"},
-    "mcm_get_request": {"request_id": "B2G-RunIISummer20UL17wmLHEGEN-00001"},
-    "mcm_get_status_and_approval": {"prepid": "B2G-RunIISummer20UL17wmLHEGEN-00001"},
-    "mcm_get_output_datasets": {"prepid": "B2G-RunIISummer20UL17wmLHEGEN-00001"},
-    "mcm_find_producing_requests": {"dataset": "/TTbar/SIM-v1/AODSIM"},
     # das_search / das_get_dataset_info are intentionally absent: they are not
-    # SSO-gated (grid client-certificate auth via dasgoclient).
+    # SSO-gated (grid client-certificate auth via dasgoclient). The mcm_*
+    # tools are also absent: McM's public REST API is anonymous (no SSO).
     "gocms_list_links": {},
     "gocms_get_link": {"link_id": 1},
     "gocms_list_tags": {},
@@ -341,6 +338,31 @@ async def test_adapter_tools_are_auth_gated(settings: Settings, tool_name: str) 
     assert payload["status"] == "error"
     assert payload["error"]["code"] == "AUTH_REQUIRED"
     assert "cern_auth_sign_in" in payload["error"]["instructions"]
+
+
+async def test_mcm_tools_are_not_sso_gated(tmp_path) -> None:
+    """McM's public REST API is anonymous: the tools must never fail with AUTH_REQUIRED.
+
+    The allowlist is narrowed to a non-CERN host so the call fails fast and
+    deterministically at URL validation (POLICY_VIOLATION) without network.
+    """
+    settings = Settings(
+        state_dir=tmp_path,
+        browser_executable=None,
+        allowed_hosts=("example.invalid",),
+    )
+    server = build_server(settings)
+    for tool_name, args in (
+        ("mcm_get_request", {"request_id": "B2G-RunIISummer20UL17wmLHEGEN-00001"}),
+        ("mcm_get_status_and_approval", {"prepid": "B2G-RunIISummer20UL17wmLHEGEN-00001"}),
+        ("mcm_get_output_datasets", {"prepid": "B2G-RunIISummer20UL17wmLHEGEN-00001"}),
+        ("mcm_find_producing_requests", {"dataset": "/TTbar/SIM-v1/AODSIM"}),
+    ):
+        result = await server.call_tool(tool_name, args)
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["status"] == "error"
+        assert payload["error"]["code"] == "POLICY_VIOLATION"
 
 
 async def test_das_tools_are_not_sso_gated(tmp_path) -> None:
