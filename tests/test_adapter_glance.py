@@ -583,3 +583,133 @@ async def test_membership_search_requires_query(tmp_path: Path) -> None:
     with pytest.raises(InvalidInputError):
         await glance.membership_search_members(client, settings, query=" ")
     assert recorder.requests == []
+
+
+ANALYSIS_DOC_PAYLOAD = {
+    "analysis": {
+        "id": 19419,
+        "customIdentifier": "HIG-23-004",
+        "notesList": [{"id": 15654}],
+    }
+}
+
+ANALYSIS_DOCUMENTS_PAYLOAD = {
+    "documents": [
+        {
+            "id": 28510,
+            "title": "PAPER",
+            "versions": [
+                {
+                    "id": 128704,
+                    "name": "HIG-23-004-paper-v10.pdf",
+                    "filePath": "/analyses/HIG-23-004",
+                    "fileName": "HIG-23-004-paper-v10",
+                    "fileExtension": "pdf",
+                }
+            ],
+        }
+    ]
+}
+
+NOTE_DOCUMENTS_PAYLOAD = {
+    "documents": [
+        {
+            "id": 15637,
+            "title": "Search for ttHH",
+            "versions": [
+                {
+                    "id": 44380,
+                    "name": "AN2022_104_v13.pdf",
+                    "filePath": "/notes/CMS-AN-2022-104",
+                    "fileName": "AN2022_104_v13",
+                    "fileExtension": "pdf",
+                }
+            ],
+        }
+    ]
+}
+
+
+def _download_handler(content: bytes) -> Handler:
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host or ""
+        path = request.url.path
+        if host == "cms-alcm.web.cern.ch":
+            return httpx.Response(200, content=content)
+        assert request.headers.get("authorization") == f"Bearer {ALCM_TOKEN}"
+        if path == "/alcm/api/analysis/ancode/HIG-23-004":
+            return httpx.Response(200, json=ANALYSIS_DOC_PAYLOAD)
+        if path == "/alcm/api/attachments/documents/entity/19419":
+            return httpx.Response(200, json=ANALYSIS_DOCUMENTS_PAYLOAD)
+        if path == "/alcm/api/attachments/documents/entity/15654":
+            return httpx.Response(200, json=NOTE_DOCUMENTS_PAYLOAD)
+        raise AssertionError(f"unexpected request {request.url}")
+
+    return handler
+
+
+async def test_download_attachment_builds_cernbox_link_and_saves(tmp_path: Path) -> None:
+    body = b"%PDF-1.7 paper"
+    recorder = Recorder(_download_handler(body))
+    settings, client = make_client(tmp_path, recorder)
+    result = await glance.download_attachment(
+        client, settings, analysis="HIG-23-004", filename="HIG-23-004-paper-v10.pdf"
+    )
+    assert result["download_url"] == (
+        "https://cms-alcm.web.cern.ch/analyses/HIG-23-004/HIG-23-004-paper-v10.pdf"
+    )
+    path = Path(result["path"])
+    assert path.parent == settings.download_dir
+    assert path.read_bytes() == body
+    assert result["size_bytes"] == len(body)
+    hosts = [request.url.host for request in recorder.requests]
+    assert "cms-alcm.web.cern.ch" in hosts
+
+
+async def test_download_attachment_matches_related_note_versions(tmp_path: Path) -> None:
+    body = b"%PDF-1.7 note"
+    recorder = Recorder(_download_handler(body))
+    settings, client = make_client(tmp_path, recorder)
+    result = await glance.download_attachment(
+        client, settings, analysis="HIG-23-004", filename="AN2022_104_v13.pdf"
+    )
+    assert result["download_url"] == (
+        "https://cms-alcm.web.cern.ch/notes/CMS-AN-2022-104/AN2022_104_v13.pdf"
+    )
+    assert Path(result["path"]).read_bytes() == body
+
+
+async def test_download_attachment_rejects_login_html_and_removes_file(tmp_path: Path) -> None:
+    login = b"<!DOCTYPE html><html><title>Sign in to CERN</title></html>"
+    recorder = Recorder(_download_handler(login))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as caught:
+        await glance.download_attachment(
+            client, settings, analysis="HIG-23-004", filename="HIG-23-004-paper-v10.pdf"
+        )
+    assert "cms-alcm.web.cern.ch" in caught.value.message
+    assert "cern_auth_sign_in" in (caught.value.instructions or "")
+    assert not list(settings.download_dir.glob("HIG-23-004-paper-v10.pdf*"))
+
+
+async def test_download_attachment_unknown_filename_rejected(tmp_path: Path) -> None:
+    recorder = Recorder(_download_handler(b"%PDF-x"))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(InvalidInputError) as caught:
+        await glance.download_attachment(
+            client, settings, analysis="HIG-23-004", filename="HIG-23-004-paper-v99.pdf"
+        )
+    assert "glance_get_analysis" in (caught.value.instructions or "")
+    assert all(
+        request.url.host != "cms-alcm.web.cern.ch" for request in recorder.requests
+    )
+
+
+async def test_download_attachment_rejects_traversal_filename(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _r: httpx.Response(200, json={}))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(InvalidInputError):
+        await glance.download_attachment(
+            client, settings, analysis="HIG-23-004", filename="../evil.pdf"
+        )
+    assert recorder.requests == []

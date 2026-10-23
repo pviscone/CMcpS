@@ -308,12 +308,24 @@ Authenticated discovery (browser network inspection) found the mechanism:
 - **Membership endpoints verified live**: `/membership/api/user`,
   `/membership/api/members/search?q=`. `/members`, `/members/{id}`, `/teams`,
   `/managers` are 404/500 — deliberately not exposed.
-- **Tools** (12): `glance_alcm_user`, `glance_membership_user`,
+- **Document files** (papers/PAS/AN drafts, CWR documents): the attachment
+  *metadata* (with version lists) comes from the Bearer API above, but the
+  *files themselves* are served from `cms-alcm.web.cern.ch` —
+  `host + filePath + / + fileName + . + fileExtension`, exactly the
+  `getCernboxLink` helper of the ALCM SPA. That host is a WebFrameworks OIDC
+  app: **session-cookie auth only**, no read API, Bearer tokens answer 401.
+  The `cern_auth_sign_in` cookie capture includes both
+  `cms-alcm.web.cern.ch` and `cds.cern.ch` (restricted CDS records and
+  attachments — e.g. CWR paper drafts — work through the same cookie
+  session). `glance_download_attachment` probes the download head and
+  refuses to save an HTML login page as a file, pointing at re-sign-in.
+- **Tools** (13): `glance_alcm_user`, `glance_membership_user`,
   `glance_search_analyses`, `glance_list_published_analyses`,
   `glance_get_analysis`, `glance_list_note_types`, `glance_search_notes`, `glance_get_note`,
   `glance_list_projects`, `glance_list_alcm_working_groups`
   (kind=physics/non-physics/all), `glance_alcm_members`,
-  `glance_membership_search_members`. Filters are client-side where the
+  `glance_membership_search_members`, `glance_download_attachment`.
+  Filters are client-side where the
   upstream has none; output projected to verified fields.
 - **Not implemented**: incubator SPA (`vocms0705`) — nothing useful
   read-only verified. GLANCE's machine API for third parties also exists

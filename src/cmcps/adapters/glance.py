@@ -48,8 +48,10 @@ filtered client-side — output is always bounded by ``limit``.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from datetime import date
+from pathlib import Path
 from typing import Any, Literal
 
 from cmcps.adapters.common import json_body
@@ -606,21 +608,8 @@ async def get_analysis(
             "analysis must be an analysis code (e.g. EXO-24-010) or a numeric id",
             instructions="Look up codes with glance_list_analyses.",
         )
-    path = f"analysis/{code_or_id}" if code_or_id.isdigit() else f"analysis/ancode/{code_or_id}"
-    source = f"glance alcm analysis {code_or_id}"
-    payload = await _app_get(client, settings, "alcm", path, source=source)
-    analysis_doc = payload.get("analysis") if isinstance(payload, dict) else None
-    if not isinstance(analysis_doc, dict):
-        raise UpstreamError(
-            f"GLANCE ALCM returned no analysis for {code_or_id}",
-            instructions="Check the code via glance_list_analyses.",
-        )
-    analysis_id = analysis_doc.get("id")
-    if not isinstance(analysis_id, int):
-        raise UpstreamError(
-            f"GLANCE ALCM returned an analysis without numeric id for {code_or_id}",
-            instructions="The API may have changed; check the ALCM frontend.",
-        )
+    analysis_doc = await _resolve_analysis(client, settings, code_or_id)
+    analysis_id = analysis_doc["id"]
 
     async def _fetch(name: str, endpoint: str) -> Any:
         try:
@@ -859,3 +848,149 @@ async def membership_search_members(
         offset=offset,
         note=note,
     )
+
+
+_CERNBOX_HOST = "https://cms-alcm.web.cern.ch"
+_LOGIN_HTML_MARKERS = (b"<!doctype", b"<html")
+_FILE_PROBE_BYTES = 4096
+
+
+def _cernbox_link(file_path: str, file_name: str, file_extension: str) -> str:
+    """Mirror the ALCM SPA ``getCernboxLink`` helper for document versions."""
+    return f"{_CERNBOX_HOST}{file_path}/{file_name}.{file_extension}"
+
+
+async def _resolve_analysis(
+    client: SafeHttpClient, settings: Settings, code_or_id: str
+) -> dict[str, Any]:
+    path = f"analysis/{code_or_id}" if code_or_id.isdigit() else f"analysis/ancode/{code_or_id}"
+    payload = await _app_get(
+        client, settings, "alcm", path, source=f"glance alcm analysis {code_or_id}"
+    )
+    analysis_doc = payload.get("analysis") if isinstance(payload, dict) else None
+    if not isinstance(analysis_doc, dict) or not isinstance(analysis_doc.get("id"), int):
+        raise UpstreamError(
+            f"GLANCE ALCM returned no analysis id for {code_or_id}",
+            instructions="Check the code with glance_search_analyses.",
+        )
+    return analysis_doc
+
+
+def _check_download_args(analysis: str, filename: str) -> tuple[str, str]:
+    code_or_id = analysis.strip()
+    if not code_or_id or len(code_or_id) > _ANCODE_RE_MAX:
+        raise InvalidInputError(
+            "analysis must be an analysis code (e.g. HIG-23-004) or a numeric id",
+            instructions="Look up codes with glance_search_analyses.",
+        )
+    filename = filename.strip()
+    if not filename or "/" in filename or "\\" in filename or ".." in filename:
+        raise InvalidInputError(
+            "filename must be a plain version file name (e.g. HIG-23-004-paper-v10.pdf)",
+            instructions="Take names from the versions listed by glance_get_analysis.",
+        )
+    return code_or_id, filename
+
+
+def _collect_matches(documents_payloads: list[Any], filename: str) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    for documents in documents_payloads:
+        if not isinstance(documents, list):
+            continue
+        for document in documents:
+            versions = document.get("versions") if isinstance(document, dict) else None
+            for version in versions or []:
+                if not isinstance(version, dict):
+                    continue
+                built = f"{version.get('fileName')}.{version.get('fileExtension')}"
+                if filename in (version.get("name"), built):
+                    matches.append(version)
+    return matches
+
+
+def _match_version(documents_payloads: list[Any], filename: str, code_or_id: str) -> dict[str, Any]:
+    matches = _collect_matches(documents_payloads, filename)
+    if not matches:
+        raise InvalidInputError(
+            f"No attachment version named {filename!r} on analysis {code_or_id}",
+            instructions="List versions with glance_get_analysis "
+            "(attachments.documents[].versions).",
+        )
+    if len(matches) > 1:
+        raise InvalidInputError(
+            f"{filename!r} matches {len(matches)} attachment versions on {code_or_id}",
+            instructions="This should not happen; report it with the analysis code.",
+        )
+    version = matches[0]
+    missing = [
+        field
+        for field in ("filePath", "fileName", "fileExtension")
+        if not isinstance(version.get(field), str) or not version[field]
+    ]
+    if missing:
+        raise UpstreamError(
+            f"GLANCE ALCM returned a version without {missing[0]} for {code_or_id}",
+            instructions="The API may have changed; check the ALCM frontend.",
+        )
+    return version
+
+
+def _login_page_saved(final: Path) -> bool:
+    head = final.read_bytes()[:_FILE_PROBE_BYTES]
+    return head.lstrip().lower().startswith(_LOGIN_HTML_MARKERS)
+
+
+async def download_attachment(
+    client: SafeHttpClient, settings: Settings, *, analysis: str, filename: str
+) -> dict[str, Any]:
+    """Download one GLANCE attachment version (paper/PAS/AN drafts) into state storage.
+
+    Document files are served from the SSO-fenced CMS backing store at
+    ``cms-alcm.web.cern.ch`` (session-cookie auth, no read API); the link is
+    built exactly as the ALCM details page does in its ``getCernboxLink``
+    helper: host + ``filePath`` + ``fileName`` + extension. ``filename`` is
+    the version file name exactly as listed by ``glance_get_analysis``
+    (``attachments.documents[].versions[].name``, e.g.
+    ``HIG-23-004-paper-v10.pdf``); it is matched over every document store of
+    the analysis and of the related notes in its ``notesList``.
+    """
+    code_or_id, filename = _check_download_args(analysis, filename)
+    analysis_doc = await _resolve_analysis(client, settings, code_or_id)
+    analysis_id = analysis_doc["id"]
+    entity_ids = [analysis_id]
+    for note in analysis_doc.get("notesList") or []:
+        if isinstance(note, dict) and isinstance(note.get("id"), int):
+            entity_ids.append(note["id"])
+
+    async def _documents(entity_id: int) -> Any:
+        payload = await _app_get(
+            client,
+            settings,
+            "alcm",
+            f"attachments/documents/entity/{entity_id}",
+            source=f"glance alcm documents {entity_id}",
+        )
+        return payload.get("documents") if isinstance(payload, dict) else None
+
+    documents_payloads = await asyncio.gather(*(_documents(eid) for eid in entity_ids))
+    version = _match_version(documents_payloads, filename, code_or_id)
+    link = _cernbox_link(version["filePath"], version["fileName"], version["fileExtension"])
+    destination = Path(f"{version['fileName']}.{version['fileExtension']}")
+    final = await client.download(link, destination)
+    if _login_page_saved(final):
+        final.unlink()
+        raise UpstreamError(
+            "cms-alcm.web.cern.ch answered with an HTML login page instead of the file",
+            instructions=(
+                "The SSO session cookie for cms-alcm.web.cern.ch is missing or expired. "
+                "Call cern_auth_sign_in (its cookie capture includes the GLANCE file host) "
+                "and retry."
+            ),
+        )
+    return {
+        "source": SOURCE,
+        "analysis": code_or_id,
+        "download_url": link,
+        "path": str(final),
+        "size_bytes": os.stat(final).st_size,
+    }

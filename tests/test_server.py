@@ -109,6 +109,7 @@ GLANCE_TOOLS = {
     "glance_list_alcm_working_groups",
     "glance_alcm_members",
     "glance_membership_search_members",
+    "glance_download_attachment",
 }
 XSDB_TOOLS = {
     "xsdb_search",

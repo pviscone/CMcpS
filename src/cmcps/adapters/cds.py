@@ -382,10 +382,11 @@ async def download_file(
     if _ICMS_STUB_MARKER in head:
         final.unlink()
         raise UpstreamError(
-            "The file is served by legacy iCMS (CMSFence) and cannot be fetched directly",
+            "The file is served by legacy iCMS (CMSFence) and answered with a login stub",
             instructions=(
-                "This attachment routes through cmsfence.cern.ch, which has no documented "
-                "read API yet; access it via the CDS record page in a browser."
+                "This restricted attachment routes through cds/cmsfence SSO; the "
+                "cds.cern.ch session cookie is missing or expired. Run cern_auth_sign_in "
+                "(its cookie capture includes cds.cern.ch) and retry."
             ),
         )
     if b"anubis" in head[:1024].lower():

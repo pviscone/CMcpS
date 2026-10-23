@@ -307,7 +307,7 @@ async def test_download_file_rejects_icms_stub_and_removes_file(tmp_path: Path) 
             download_url="https://cds.cern.ch/record/2875713/files/IN2023_001.pdf",
         )
     assert "iCMS" in caught.value.message
-    assert "cmsfence.cern.ch" in (caught.value.instructions or "")
+    assert "cern_auth_sign_in" in (caught.value.instructions or "")
     assert not list(settings.download_dir.glob("IN2023_001.pdf*"))
 
 

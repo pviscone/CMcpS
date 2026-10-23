@@ -222,14 +222,48 @@ async def _twiki_session_ready(context: BrowserContext) -> bool:
     return bool(cookies)
 
 
+async def _cds_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds a logged-in CDS session on cds.cern.ch.
+
+    cds.cern.ch gates restricted records and attachments (e.g. CMS CWR paper
+    drafts) behind CERN SSO; inside an authenticated context the login page
+    completes the silent OIDC handshake and drops ``mod_auth_openidc_session``
+    plus Invenio session cookies.
+    """
+    try:
+        cookies = await context.cookies("https://cds.cern.ch")
+    except PlaywrightError:
+        return False
+    return any(cookie.get("name") == "mod_auth_openidc_session" for cookie in cookies)
+
+
+async def _cms_alcm_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds a session on cms-alcm.web.cern.ch.
+
+    cms-alcm.web.cern.ch serves ALL GLANCE/ALCM document files (papers, PAS,
+    analysis notes) behind CERN WebFrameworks OIDC; the silent handshake drops
+    ``mod_auth_openidc_session``, which the download URLs require.
+    """
+    try:
+        cookies = await context.cookies("https://cms-alcm.web.cern.ch")
+    except PlaywrightError:
+        return False
+    return any(cookie.get("name") == "mod_auth_openidc_session" for cookie in cookies)
+
+
 # The TWiki entry visits the viewauth script so the SSO handshake drops the
 # twiki.cern.ch session cookie used by scripts that gate on login (protected
 # attachment downloads); page content itself is served anonymously.
+# The CDS entry is needed for restricted CDS records/files (SSO-gated); the
+# cms-alcm.web.cern.ch entry for every GLANCE document file (papers, PAS,
+# notes) downloaded via the ALCM "cernbox" link pattern.
 _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], ...] = (
     ("https://cms-talk.web.cern.ch", None, None),
     ("https://cms-pub-talk.web.cern.ch", None, None),
     (JIRA_SITE_URL, _advance_jira_sso, _jira_session_ready),
     ("https://twiki.cern.ch/twiki/bin/viewauth/CMS/WebHome", None, _twiki_session_ready),
+    ("https://cds.cern.ch/youraccount/login?ln=en", None, _cds_session_ready),
+    ("https://cms-alcm.web.cern.ch/", None, _cms_alcm_session_ready),
 )
 
 _COOKIE_CAPTURE_TIMEOUT_MS = 30_000

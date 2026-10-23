@@ -296,3 +296,30 @@ def register_glance_tools(  # noqa: C901
                 http, settings, query=query, limit=limit, offset=offset
             ),
         )
+
+    @server.tool(
+        name="glance_download_attachment",
+        description=(
+            "Download one GLANCE attachment version (PAPER/PAS drafts, "
+            "analysis notes, CWR documents — the PDFs listed in "
+            "glance_get_analysis attachments.documents[].versions or in the "
+            "related note documents) into local CMcpS download storage. Pass "
+            "analysis as code or id and filename as the exact version name "
+            "(e.g. 'HIG-23-004-paper-v10.pdf'). The files live on the "
+            "SSO-fenced host cms-alcm.web.cern.ch (cookie auth captured by "
+            "cern_auth_sign_in); an HTML login page is detected and reported "
+            "instead of being saved as a file. Bearer tokens do NOT apply "
+            "here — only the session cookie. " + _AUTH_DOC
+        ),
+    )
+    async def glance_download_attachment(
+        analysis: str,
+        filename: str,
+    ) -> ToolEnvelope:
+        """GLANCE attachment-file download."""
+        return await guarded(
+            auth,
+            lambda: glance.download_attachment(
+                http, settings, analysis=analysis, filename=filename
+            ),
+        )

@@ -128,7 +128,7 @@ Legacy Invenio search API. CDS occasionally serves an Anubis bot challenge to no
 - `cds_search` — document search with experiment / document-type / date filters.
 - `cds_get_record` — full record by recid (`123456` or `cds:123456`).
 - `cds_get_files` — attachment metadata and download links for a record (links only).
-- `cds_download_file` — bounded download of one attachment URL into local CMcpS storage; returns the local path and size. CMS Internal Note files served by legacy iCMS (CMSFence) are not fetchable through CDS; the tool detects the iCMS login placeholder and reports it instead of returning HTML.
+- `cds_download_file` — bounded download of one attachment URL into local CMcpS storage; returns the local path and size. Restricted records and attachments (e.g. CWR paper drafts) require the cds.cern.ch SSO cookies captured by `cern_auth_sign_in`; a missing/expired session is detected (iCMS login placeholder / login HTML) and reported instead of returning HTML as a file.
 
 All search/list tools share the `SearchResult` envelope (`source, items, total_count, page, size, has_more, query, sort, note`). The mapping of every original reference-server tool to its CMcpS tool (including intentional removals) is documented in [docs/m2-migration.md](docs/m2-migration.md).
 
@@ -284,6 +284,7 @@ GLANCE exposes separate Keycloak **Bearer-only** APIs per application — browse
 - `glance_list_alcm_working_groups` — working groups, `kind=physics|non-physics|all`.
 - `glance_alcm_members` — ALCM member roster, substring name filter.
 - `glance_membership_search_members` — CMS member search by name (`query` required), paginated client-side.
+- `glance_download_attachment` — download one GLANCE attachment version (PAPER/PAS drafts, analysis-note PDFs, CWR documents) into CMcpS storage by exact version `filename` (e.g. `HIG-23-004-paper-v10.pdf`). The files are served from `cms-alcm.web.cern.ch` behind SSO **session cookies** (not Bearer tokens): the sign-in cookie capture includes that host, and an HTML login page is detected and reported instead of being saved as a file.
 
 ## MkDocs tools (docs.cern.ch and any MkDocs site)
 
