@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qsl
 
 import httpx
@@ -157,6 +158,33 @@ async def test_get_detail_saml_maps_upstream(tmp_path: Path) -> None:
     client = make_client(tmp_path, recorder)
     with pytest.raises(UpstreamError):
         await elog.get_detail(client, msg_id=5)
+
+
+async def test_get_detail_recovers_via_render_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "strutsAction=" in url:
+            return httpx.Response(200, text="<body>SAMLRequest</body>")
+        return httpx.Response(200, text=ELOG_SHELL)
+
+    recorder = Recorder(handler)
+    client = make_client(tmp_path, recorder)
+    rendered_urls: list[str] = []
+
+    async def fake_render(url: str, *, interact: Any = None) -> str:
+        rendered_urls.append(url)
+        assert interact is None
+        return DETAIL_HTML
+
+    monkeypatch.setattr(client, "render_page", fake_render)
+    result = await elog.get_detail(client, msg_id=1347902, sub_id=495)
+    assert result["msg_id"] == 1347902
+    assert "Detailed body text" in result["text"]
+    assert result["attachments"] == ["https://cmsonline.cern.ch/Elog/htdocs/data/495/1347902_1.png"]
+    assert len(rendered_urls) == 1
+    assert "viewMessageDetails.do" in rendered_urls[0]
 
 
 async def test_list_categories(tmp_path: Path) -> None:

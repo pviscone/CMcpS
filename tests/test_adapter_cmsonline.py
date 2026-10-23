@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -215,3 +216,39 @@ async def test_shift_schedule_saml_maps_upstream(tmp_path: Path) -> None:
     client = make_client(tmp_path, recorder)
     with pytest.raises(UpstreamError):
         await cmsonline.get_shift_schedule(client)
+
+
+async def test_shift_schedule_recovers_via_render_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = Recorder(lambda _r: httpx.Response(200, text="<body>SAMLRequest x</body>"))
+    client = make_client(tmp_path, recorder)
+    render_calls: list[tuple[str, Any]] = []
+
+    async def fake_render(url: str, *, interact: Any = None) -> str:
+        render_calls.append((url, interact))
+        return SHIFT_HTML
+
+    monkeypatch.setattr(client, "render_page", fake_render)
+    result = await cmsonline.get_shift_schedule(client)
+    assert result["block_count"] == 1
+    assert result["items"][0]["name"] == "Benjamin Calvet"
+    assert render_calls == [(cmsonline._SHIFT_LIST_URL, None)]
+
+
+async def test_shift_schedule_passes_date_interact_to_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = Recorder(lambda _r: httpx.Response(200, text="<body>SAMLRequest x</body>"))
+    client = make_client(tmp_path, recorder)
+    render_calls: list[Any] = []
+
+    async def fake_render(_url: str, *, interact: Any = None) -> str:
+        render_calls.append(interact)
+        return SHIFT_HTML
+
+    monkeypatch.setattr(client, "render_page", fake_render)
+    result = await cmsonline.get_shift_schedule(client, date="2026-10-24")
+    assert result["date"] == "2026-10-24"
+    assert len(render_calls) == 1
+    assert callable(render_calls[0])

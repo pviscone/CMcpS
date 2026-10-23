@@ -220,3 +220,110 @@ async def test_reauthenticate_discards_session_and_service_tokens(
     assert "discarded" in result.message
     session = await auth.ensure_authenticated()
     assert session.authenticated
+
+
+PORTAL_URL = "https://cmsonline.cern.ch/webcenter/portal/cmsonline/pages_common/shiftlist"
+
+
+def _portal_cookie(expires: float) -> dict[str, Any]:
+    return {
+        "name": "PORTALSESSION",
+        "value": "portal-secret-value",
+        "domain": ".cmsonline.cern.ch",
+        "path": "/",
+        "expires": expires,
+        "secure": True,
+        "httpOnly": True,
+        "sameSite": "Lax",
+    }
+
+
+async def test_render_page_returns_html_and_persists_cookies(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+    future_epoch: float,
+) -> None:
+    calls: list[tuple[str, Any]] = []
+
+    async def renderer(
+        _: Settings, state: dict[str, Any], url: str, interact: Any
+    ) -> tuple[str, dict[str, Any]]:
+        calls.append((url, interact))
+        return (
+            '<table bgcolor="Lavender"></table>',
+            {
+                "cookies": [*state["cookies"], _portal_cookie(future_epoch)],
+                "origins": [],
+            },
+        )
+
+    async def interact(_page: Any) -> bool:
+        return True
+
+    auth = AuthService(settings, page_renderer=renderer)
+    auth.store.save(valid_storage_state)
+
+    html = await auth.render_page(PORTAL_URL, interact=interact)
+    assert html == '<table bgcolor="Lavender"></table>'
+    assert calls == [(PORTAL_URL, interact)]
+
+    record = auth.store.load()
+    assert record is not None
+    assert record.cookie_header_for(PORTAL_URL) == "PORTALSESSION=portal-secret-value"
+    assert (
+        record.cookie_header_for("https://auth.cern.ch/account")
+        == "KEYCLOAK_IDENTITY=sso-secret-value"
+    )
+
+
+async def test_render_page_keeps_store_when_render_fails(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    async def renderer(_: Settings, _state: dict[str, Any], _url: str, _interact: Any) -> None:
+        return None
+
+    auth = AuthService(settings, page_renderer=renderer)
+    before = auth.store.save(valid_storage_state)
+
+    assert await auth.render_page(PORTAL_URL) is None
+    after = auth.store.load()
+    assert after is not None
+    assert after.created_at == before.created_at
+    assert after.cookie_header_for(PORTAL_URL) is None
+
+
+async def test_render_page_requires_usable_identity(
+    settings: Settings,
+    expired_storage_state: dict[str, Any],
+) -> None:
+    called = False
+
+    async def renderer(
+        _: Settings, _state: dict[str, Any], _url: str, _interact: Any
+    ) -> tuple[str, dict[str, Any]]:
+        nonlocal called
+        called = True
+        return ("", {})
+
+    auth = AuthService(settings, page_renderer=renderer)
+
+    assert await auth.render_page(PORTAL_URL) is None
+    auth.store.save(expired_storage_state)
+    assert await auth.render_page(PORTAL_URL) is None
+    assert called is False
+
+
+async def test_render_page_rejects_non_allowlisted_url(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    auth = AuthService(settings)
+    auth.store.save(valid_storage_state)
+    assert await auth.render_page("https://attacker.example/portal") is None
+
+
+async def test_render_page_disabled_in_bypass(tmp_path: Path) -> None:
+    settings = Settings(state_dir=tmp_path, require_sso=False)
+    auth = AuthService(settings)
+    assert await auth.render_page(PORTAL_URL) is None

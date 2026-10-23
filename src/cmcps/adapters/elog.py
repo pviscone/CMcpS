@@ -21,7 +21,9 @@ proved these constraints:
 - Attachments referenced via ``/Elog/htdocs/data/<logId>/<file>`` paths.
 
 The portal POST path is the curated ``request_form_post`` allowlisted to
-``cmsonline.cern.ch`` (read-only semantics; no state mutation).
+``cmsonline.cern.ch`` (read-only semantics; no state mutation). Detail GETs
+fall back to the headless-browser render (``client.render_page``) when the
+portal answers with the SAML login form or its ADF loopback shell.
 """
 
 from __future__ import annotations
@@ -62,6 +64,12 @@ _MSG_LINK = (
     '">_elog_</a>'
 )
 _XHR_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+_PORTAL_GATES = ("SAMLRequest", "runLoopback")
+
+
+def _portal_gate(html: str) -> bool:
+    """The portal serves a login/loopback shell instead of content."""
+    return any(marker in html for marker in _PORTAL_GATES)
 
 
 class _TextMin(HTMLParser):
@@ -233,28 +241,39 @@ async def search(
     )
 
 
+async def _fetch_detail_text(
+    client: SafeHttpClient, *, msg_id: int, detail_sub: str
+) -> tuple[str, str]:
+    """One portal round-trip for the full entry detail page body and its URL."""
+    # discover the current portlet id
+    shell = await client.request("GET", ELOG_PAGE)
+    shell_html = shell.content.decode("utf-8", errors="replace")
+    pid_match = _PORTLET_RE.search(shell_html)
+    pid = pid_match.group(1) if pid_match else "683379043"
+    action = quote(f"/viewMessageDetails.do?msgId={msg_id}&subId={detail_sub}", safe="")
+    url = (
+        f"{ELOG_PAGE}?__adfpwp_mode.{pid}=1&__adfpwp_action_portlet={pid}"
+        f"&_piref{pid}.strutsAction={action}"
+    )
+    response = await client.request("GET", url)
+    return response.content.decode("utf-8", errors="replace"), url
+
+
 async def get_detail(
     client: SafeHttpClient, *, msg_id: int, sub_id: int | None = None
 ) -> dict[str, Any]:
     """Full entry detail via the portal portlet dispatch."""
     if int(msg_id) <= 0:
         raise InvalidInputError("msg_id must be a positive integer")
-    # discover the current portlet id
-    shell = await client.request("GET", ELOG_PAGE)
-    shell_html = shell.content.decode("utf-8", errors="replace")
-    pid_match = _PORTLET_RE.search(shell_html)
-    pid = pid_match.group(1) if pid_match else "683379043"
     detail_sub = str(sub_id) if sub_id else str(_DETAIL_SUB_ID)
-    action = quote(f"/viewMessageDetails.do?msgId={int(msg_id)}&subId={detail_sub}", safe="")
-    url = (
-        f"{ELOG_PAGE}?__adfpwp_mode.{pid}=1&__adfpwp_action_portlet={pid}"
-        f"&_piref{pid}.strutsAction={action}"
-    )
-    response = await client.request("GET", url)
-    text = response.content.decode("utf-8", errors="replace")
-    if "SAMLRequest" in text:
+    text, url = await _fetch_detail_text(client, msg_id=int(msg_id), detail_sub=detail_sub)
+    if _portal_gate(text):
+        rendered = await client.render_page(url)
+        if rendered is not None:
+            text = rendered
+    if _portal_gate(text):
         raise UpstreamError(
-            "portal answered with the SAML login form",
+            "portal answered with the login page instead of the entry detail",
             instructions="Call cern_auth_sign_in again to refresh the portal session.",
         )
     body_text = html_to_text(text, limit=20000)

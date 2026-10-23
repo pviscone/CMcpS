@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.async_api import (
     Browser,
@@ -26,16 +28,17 @@ logger = logging.getLogger(__name__)
 _CAPTURE_TIMEOUT_SECONDS = 60
 
 
-async def _launch_browser(settings: Settings, playwright: Playwright) -> Browser:
+async def _launch_browser(settings: Settings, playwright: Playwright, *, headless: bool) -> Browser:
     launcher = playwright.chromium if settings.browser_type == "chromium" else playwright.firefox
+    kind = "headless" if headless else "visible"
     try:
         return await launcher.launch(
-            headless=False,
+            headless=headless,
             executable_path=settings.browser_executable,
         )
     except PlaywrightError as exc:
         raise BrowserUnavailableError(
-            "A visible browser could not be started",
+            f"A {kind} browser could not be started",
             instructions=(
                 "Install Chromium/Firefox or run `uv run playwright install chromium`; "
                 "set CMCPS_BROWSER_EXECUTABLE when the binary is not on PATH."
@@ -163,7 +166,7 @@ async def collect_sso_state(
 
     try:
         async with async_playwright() as playwright:
-            browser = await _launch_browser(settings, playwright)
+            browser = await _launch_browser(settings, playwright, headless=False)
             context = await browser.new_context(accept_downloads=False)
             page = await context.new_page()
             await page.goto(
@@ -175,6 +178,98 @@ async def collect_sso_state(
             capture = await _capture_bearer_services(settings, context)
             storage_state["service_tokens"] = capture
             return storage_state
+    finally:
+        await _close_resource(context, "context")
+        await _close_resource(browser, "browser")
+
+
+_REFRESH_TIMEOUT_SECONDS = 60
+_SAML_FORM_MARKER = "SAMLRequest"
+_ADF_LOOPBACK_MARKER = "runLoopback"
+
+PortalInteract = Callable[[Any], Awaitable[bool]]
+
+
+def _portal_ready(content: str) -> bool:
+    """The portal serves content only after SAML and the ADF loopback settle."""
+    return _SAML_FORM_MARKER not in content and _ADF_LOOPBACK_MARKER not in content
+
+
+async def _page_ready(page: Page, target_host: str | None) -> bool:
+    if urlsplit(page.url).hostname != target_host:
+        return False
+    try:
+        await page.wait_for_load_state("load", timeout=5_000)
+        content = await page.content()
+    except PlaywrightError:
+        # Transient failure while the framework is mid-navigation.
+        return False
+    return _portal_ready(content)
+
+
+async def _wait_page_ready(
+    settings: Settings, page: Page, target_host: str | None, deadline: float
+) -> bool:
+    while True:
+        if page.is_closed():
+            return False
+        if await _page_ready(page, target_host):
+            return True
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(settings.sso_poll_seconds, remaining))
+
+
+async def render_page_html(
+    settings: Settings,
+    storage_state: dict[str, Any],
+    url: str,
+    interact: PortalInteract | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Render one SAML-protected portal page headlessly and return its HTML.
+
+    The stored Keycloak identity makes the SAML form round-trip silent; the
+    loop then waits through the ADF loopback shell until real content arrives.
+    ``interact`` is an optional async hook that drives a read-only portlet
+    interaction (such as a date selection) on the live page and returns
+    whether it applied; the final readiness poll runs after it. Returns
+    ``(html, refreshed_storage_state)`` or ``None`` when the page never
+    reached ready content.
+    """
+    target_host = urlsplit(url).hostname
+    deadline = asyncio.get_running_loop().time() + _REFRESH_TIMEOUT_SECONDS
+    browser: Browser | None = None
+    context: BrowserContext | None = None
+    try:
+        async with async_playwright() as playwright:
+            browser = await _launch_browser(settings, playwright, headless=True)
+            context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
+            page = await context.new_page()
+            try:
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=min(30_000, _REFRESH_TIMEOUT_SECONDS * 1000),
+                )
+            except PlaywrightError:
+                logger.debug("Portal page load failed during render for %s", url)
+                return None
+            if not await _wait_page_ready(settings, page, target_host, deadline):
+                logger.debug("Portal render timed out before ready for %s", url)
+                return None
+            if interact is not None:
+                try:
+                    applied = await interact(page)
+                except PlaywrightError:
+                    logger.debug("Portal interaction failed for %s", url)
+                    return None
+                if not applied or not await _wait_page_ready(settings, page, target_host, deadline):
+                    return None
+            content = await page.content()
+            if not _portal_ready(content):
+                return None
+            return content, await context.storage_state()
     finally:
         await _close_resource(context, "context")
         await _close_resource(browser, "browser")

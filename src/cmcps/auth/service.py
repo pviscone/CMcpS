@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from cmcps.auth.browser import collect_sso_state
+from cmcps.auth.browser import PortalInteract, collect_sso_state, render_page_html
 from cmcps.auth.store import SessionRecord, SessionStore, minimize_storage_state
 from cmcps.auth.tokens import (
     BEARER_SERVICE_EXCHANGE_AUDIENCES,
@@ -26,8 +26,10 @@ from cmcps.config.settings import (
 )
 from cmcps.contracts.errors import (
     AuthRequiredError,
+    BrowserUnavailableError,
     InvalidInputError,
     InvalidSessionError,
+    PolicyViolationError,
     SessionStoreError,
 )
 from cmcps.contracts.results import SessionMetadata, SignInResult
@@ -36,6 +38,10 @@ from cmcps.net.safety import host_matches, validate_url
 logger = logging.getLogger(__name__)
 
 StorageStateCollector = Callable[[Settings, int | None], Awaitable[dict[str, Any]]]
+PageRenderer = Callable[
+    [Settings, dict[str, Any], str, "PortalInteract | None"],
+    Awaitable["tuple[str, dict[str, Any]] | None"],
+]
 
 SIGN_IN_FIRST = "Call cern_auth_sign_in and complete the CERN browser login."
 
@@ -78,10 +84,12 @@ class AuthService:
         *,
         store: SessionStore | None = None,
         collector: StorageStateCollector = collect_sso_state,
+        page_renderer: PageRenderer = render_page_html,
     ) -> None:
         self.settings = settings
         self.store = store or SessionStore(settings.session_path)
         self.collector = collector
+        self.page_renderer = page_renderer
 
     @property
     def identity_host(self) -> str:
@@ -231,6 +239,48 @@ class AuthService:
         result = await self.sign_in(timeout_seconds)
         result.message += " Stored cookies and service tokens were discarded first."
         return result
+
+    async def render_page(self, url: str, *, interact: PortalInteract | None = None) -> str | None:
+        """Render one SAML-protected portal page via a headless browser.
+
+        Re-drives ``url`` against the stored Keycloak identity (the SAML form
+        round-trip and ADF loopback are silent in a real browser), persists
+        the refreshed cookie jar, and returns the ready page HTML. Returns
+        ``None`` — leaving the store untouched — when SSO is bypassed, the
+        session is missing or expired, or the page never reached content.
+        """
+        record = self._authenticated_record(url)
+        if record is None:
+            return None
+        try:
+            rendered = await self.page_renderer(self.settings, record.storage_state, url, interact)
+        except BrowserUnavailableError:
+            logger.debug("Portal render skipped; no browser available for %s", url)
+            return None
+        if not rendered:
+            return None
+        html, refreshed_state = rendered
+        minimized = minimize_storage_state(refreshed_state, self.settings.allowed_hosts)
+        self.store.save(minimized)
+        return html
+
+    def _authenticated_record(self, url: str) -> SessionRecord | None:
+        """Return the stored session when SSO is active, the URL allowlisted, and identity fresh."""
+        if not self.settings.require_sso:
+            return None
+        try:
+            validate_url(url, allowed_hosts=self.settings.allowed_hosts)
+            record = self.store.load()
+        except (PolicyViolationError, SessionStoreError):
+            logger.debug("Portal render rejected for %s", url, exc_info=True)
+            return None
+        if record is None or not record.is_authenticated(
+            self.settings.identity_cookie_names,
+            identity_host=self.identity_host,
+            max_session_age_seconds=self.settings.session_max_age_seconds,
+        ):
+            return None
+        return record
 
     def _persist_service_tokens(self, exchanges: dict[str, Any]) -> list[str]:
         """Parse intercepted token responses and store them; best effort."""

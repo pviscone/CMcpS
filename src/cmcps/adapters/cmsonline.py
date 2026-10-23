@@ -18,7 +18,10 @@ Endpoints used: ``GET /agg/api/v1/{version,runs,fills,lumisections}`` with
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
+
+from playwright.async_api import Error as PlaywrightError
 
 from cmcps.adapters.common import json_body
 from cmcps.contracts.errors import InvalidInputError, UpstreamError
@@ -181,6 +184,10 @@ async def list_lumisections(
 #   class="shifterInfo">First<br>Last</div></a>; uncovered cells are empty.
 # rowspan N spans the next N hours of that column, so subsequent rows omit
 # the cell for that system — the parser tracks per-column spans.
+#
+# Cookie-less (or fresh-session) answers are not the grid but the SAML login
+# form or the ADF ``runLoopback`` shell; those take the headless-browser
+# render fallback (``client.render_page``) with an in-page date form submit.
 _SHIFT_LIST_URL = "https://cmsonline.cern.ch/webcenter/portal/cmsonline/pages_common/shiftlist"
 _SHIFT_CELL_RE = re.compile(r"<t[dh](?P<attrs>[^>]*)>(?P<content>.*?)</t[dh]>", re.DOTALL)
 _SHIFT_CLASS_RE = re.compile(r'class="([A-Za-z0-9]+)"')
@@ -306,6 +313,83 @@ def _shift_post(date: str) -> dict[str, str]:
     }
 
 
+_PORTAL_GATES = ("SAMLRequest", "runLoopback")
+
+
+def _portal_gate(html: str) -> bool:
+    """The portal serves a login/loopback shell instead of content."""
+    return any(marker in html for marker in _PORTAL_GATES)
+
+
+def _shift_render_interact(date: str) -> Callable[[Any], Awaitable[bool]]:
+    """Drive the shiftlist date form in the rendered-browser fallback."""
+    year, month, day = date.split("-")
+    values = [year, str(int(month)), str(int(day))]
+
+    async def interact(page: Any) -> bool:
+        applied = await page.evaluate(
+            """([y, m, d]) => {
+                const fields = [...document.querySelectorAll("input, select")];
+                const suffixed = (suffix) =>
+                    fields.find((f) => typeof f.name === "string" && f.name.endsWith(suffix));
+                const targets = [
+                    [suffixed("year"), y],
+                    [suffixed("month"), m],
+                    [suffixed("day"), d],
+                ];
+                if (targets.some(([field]) => !field)) return false;
+                for (const [field, value] of targets) field.value = value;
+                const show = fields.find((f) => f.type === "submit" && f.value === "Show");
+                if (!show) return false;
+                show.click();
+                return true;
+            }""",
+            values,
+        )
+        if not applied:
+            return False
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10_000)
+        except PlaywrightError:
+            # ADF may answer with a partial update instead of a navigation.
+            await page.wait_for_timeout(1_000)
+        return await page.evaluate(
+            """([y, m, d]) => {
+                const fields = [...document.querySelectorAll("input, select")];
+                const suffixed = (suffix) =>
+                    fields.find((f) => typeof f.name === "string" && f.name.endsWith(suffix));
+                const num = (v) => Number.parseInt(v, 10);
+                const fy = suffixed("year"), fm = suffixed("month"), fd = suffixed("day");
+                if (!fy || !fm || !fd) return false;
+                return (
+                    num(fy.value) === num(y) &&
+                    num(fm.value) === num(m) &&
+                    num(fd.value) === num(d)
+                );
+            }""",
+            values,
+        )
+
+    return interact
+
+
+async def _fetch_shift_html(client: SafeHttpClient, date: str | None) -> str:
+    """One full GET (+ optional ADF date POST) round-trip against the portal."""
+    response = await client.request("GET", _SHIFT_LIST_URL)
+    if response.status_code >= _MIN_ERROR_STATUS:
+        raise UpstreamError(
+            f"shift list failed with status {response.status_code}",
+            status_code=response.status_code,
+        )
+    html = response.content.decode("utf-8", errors="replace")
+    if date is not None and "SAMLRequest" not in html:
+        data = _shift_get_fields(html)
+        data.update(_shift_post(date))
+        post_response = await client.request_form_post(_SHIFT_LIST_URL, data=data)
+        html = post_response.content.decode("utf-8", errors="replace")
+    return html
+
+
 async def get_shift_schedule(client: SafeHttpClient, *, date: str | None = None) -> dict[str, Any]:
     """CMS Online shift schedule: role blocks per system for one date.
 
@@ -314,21 +398,17 @@ async def get_shift_schedule(client: SafeHttpClient, *, date: str | None = None)
     from the working browser interaction). ``date=None`` = current page
     default (today).
     """
-    response = await client.request("GET", _SHIFT_LIST_URL)
-    if response.status_code >= _MIN_ERROR_STATUS:
-        raise UpstreamError(
-            f"shift list failed with status {response.status_code}",
-            status_code=response.status_code,
+    html = await _fetch_shift_html(client, date)
+    if _portal_gate(html):
+        rendered = await client.render_page(
+            _SHIFT_LIST_URL,
+            interact=_shift_render_interact(date) if date is not None else None,
         )
-    html = response.content.decode("utf-8", errors="replace")
-    if date is not None:
-        data = _shift_get_fields(html)
-        data.update(_shift_post(date))
-        post_response = await client.request_form_post(_SHIFT_LIST_URL, data=data)
-        html = post_response.content.decode("utf-8", errors="replace")
-    if "SAMLRequest" in html:
+        if rendered is not None:
+            html = rendered
+    if _portal_gate(html):
         raise UpstreamError(
-            "portal answered with the SAML login form",
+            "portal answered with the login page instead of the shift grid",
             instructions="Call cern_auth_sign_in again to refresh the portal session.",
         )
     table_match = _SHIFT_TABLE_RE.search(html)

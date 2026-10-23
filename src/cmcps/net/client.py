@@ -7,6 +7,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -69,6 +70,18 @@ class SafeHttpClient:
         if self.auth_service is None:
             return None
         return await self.auth_service.service_bearer(service)
+
+    async def render_page(self, url: str, *, interact: Any = None) -> str | None:
+        """Render a SAML-protected portal page through the headless auth layer.
+
+        Trusted adapters call this when the portal answers with the SAML login
+        form or its ADF loopback shell instead of content; the returned HTML
+        is the fully rendered page (``interact`` may first drive read-only
+        portlet interactions such as a date selection). ``None`` on failure.
+        """
+        if self.auth_service is None:
+            return None
+        return await self.auth_service.render_page(url, interact=interact)
 
     def _next_redirect(
         self,
