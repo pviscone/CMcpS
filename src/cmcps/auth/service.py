@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from cmcps.auth.browser import PortalInteract, collect_sso_state, render_page_html
+from cmcps.auth.browser import (
+    PortalInteract,
+    collect_sso_state,
+    render_page_html,
+    warm_cookie_sites,
+)
 from cmcps.auth.store import SessionRecord, SessionStore, minimize_storage_state
 from cmcps.auth.tokens import (
     BEARER_SERVICE_EXCHANGE_AUDIENCES,
@@ -41,6 +46,10 @@ StorageStateCollector = Callable[[Settings, int | None], Awaitable[dict[str, Any
 PageRenderer = Callable[
     [Settings, dict[str, Any], str, "PortalInteract | None"],
     Awaitable["tuple[str, dict[str, Any]] | None"],
+]
+SiteWarmer = Callable[
+    [Settings, dict[str, Any], Sequence[str]],
+    Awaitable["dict[str, Any] | None"],
 ]
 
 SIGN_IN_FIRST = "Call cern_auth_sign_in and complete the CERN browser login."
@@ -85,11 +94,13 @@ class AuthService:
         store: SessionStore | None = None,
         collector: StorageStateCollector = collect_sso_state,
         page_renderer: PageRenderer = render_page_html,
+        site_warmer: SiteWarmer = warm_cookie_sites,
     ) -> None:
         self.settings = settings
         self.store = store or SessionStore(settings.session_path)
         self.collector = collector
         self.page_renderer = page_renderer
+        self.site_warmer = site_warmer
 
     @property
     def identity_host(self) -> str:
@@ -239,6 +250,29 @@ class AuthService:
         result = await self.sign_in(timeout_seconds)
         result.message += " Stored cookies and service tokens were discarded first."
         return result
+
+    async def warm_sites(self, urls: Sequence[str]) -> bool:
+        """Re-establish cookie-only site sessions and persist the refreshed state.
+
+        Site sessions (e.g. Jira's JSESSIONID) can expire before the Keycloak
+        identity does; the stored identity makes each site's silent SSO
+        handshake succeed again. Best effort: returns ``False`` when SSO is
+        bypassed, the session is unusable, no URL matches a configured site,
+        or the warm-up failed.
+        """
+        if not self.settings.require_sso:
+            return False
+        for url in urls:
+            validate_url(url, allowed_hosts=self.settings.allowed_hosts)
+        record = self._authenticated_record(urls[0]) if urls else None
+        if record is None:
+            return False
+        refreshed = await self.site_warmer(self.settings, record.storage_state, urls)
+        if not refreshed:
+            return False
+        minimized = minimize_storage_state(refreshed, self.settings.allowed_hosts)
+        self.store.save(minimized)
+        return True
 
     async def render_page(self, url: str, *, interact: PortalInteract | None = None) -> str | None:
         """Render one SAML-protected portal page via a headless browser.

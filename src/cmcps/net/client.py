@@ -71,6 +71,12 @@ class SafeHttpClient:
             return None
         return await self.auth_service.service_bearer(service)
 
+    async def warm_sites(self, urls: list[str] | tuple[str, ...]) -> bool:
+        """Re-establish cookie-only SSO sessions for the given sites, if possible."""
+        if self.auth_service is None:
+            return False
+        return await self.auth_service.warm_sites(list(urls))
+
     async def render_page(self, url: str, *, interact: Any = None) -> str | None:
         """Render a SAML-protected portal page through the headless auth layer.
 

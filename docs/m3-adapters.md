@@ -107,10 +107,18 @@ platform lands. Testing flags: default tests are fixture-only;
 
 - **Endpoint type**: standard Jira Server REST API v2.
 - **Auth**: `serverInfo` and public `search` readable anonymously
-  (verified); restricted projects/issues need CERN SSO (injected cookies).
+  (verified); restricted projects/issues need a Jira session cookie.
+  its.cern.ch authenticates via a silent auth.cern.ch OIDC handshake
+  (client `jira-central-prod`); the sign-in flow captures the session on
+  `/jira/login.jsp` (its inline script advances to the IdP), and the adapter
+  re-warms it headlessly after a 401/403 —
+  Jira session cookies expire before the Keycloak identity. `search` first
+  probes `/myself`; without a live session the `SearchResult.note` flags
+  public-only visibility.
 - **Endpoints**:
   - `GET /jira/rest/api/2/search?jql=...&startAt=&maxResults=&fields=...`
     — `{issues, total, startAt, maxResults}` envelope; offset paging.
+  - `GET /jira/rest/api/2/myself` — session probe (401 when anonymous).
   - `GET /jira/rest/api/2/issue/<KEY>?fields=...` — detail with
     plain-text description (Jira Server, not ADF), comments (capped at 50,
     4000 chars each), attachment URLs.

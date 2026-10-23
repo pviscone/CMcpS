@@ -327,3 +327,77 @@ async def test_render_page_disabled_in_bypass(tmp_path: Path) -> None:
     settings = Settings(state_dir=tmp_path, require_sso=False)
     auth = AuthService(settings)
     assert await auth.render_page(PORTAL_URL) is None
+
+
+JIRA_SITE = "https://its.cern.ch/jira/secure/Dashboard.jspa"
+
+
+async def test_warm_sites_persists_refreshed_state(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    jira_cookie = {
+        "name": "JSESSIONID",
+        "value": "fresh-jira-session",
+        "domain": "its.cern.ch",
+        "path": "/jira",
+        "expires": -1,
+        "secure": True,
+        "httpOnly": True,
+    }
+    calls: list[tuple[dict[str, Any], Any]] = []
+
+    async def warmer(_: Settings, state: dict[str, Any], urls: Any) -> dict[str, Any]:
+        calls.append((state, urls))
+        refreshed = dict(state)
+        refreshed["cookies"] = [*state["cookies"], jira_cookie]
+        return refreshed
+
+    auth = AuthService(settings, site_warmer=warmer)
+    auth.store.save(valid_storage_state)
+    assert await auth.warm_sites((JIRA_SITE,)) is True
+    assert len(calls) == 1
+    assert calls[0][0]["cookies"][0]["value"] == "sso-secret-value"
+    stored = auth.store.load()
+    assert stored is not None
+    assert any(c["name"] == "JSESSIONID" for c in stored.cookies)
+
+
+async def test_warm_sites_does_not_persist_unrelated_state(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    calls = 0
+
+    async def warmer(_: Settings, _state: dict[str, Any], _urls: Any) -> None:
+        nonlocal calls
+        calls += 1
+
+    auth = AuthService(settings, site_warmer=warmer)
+    auth.store.save(valid_storage_state)
+    before = auth.store.load()
+    assert await auth.warm_sites((JIRA_SITE,)) is False
+    assert calls == 1
+    assert auth.store.load() == before
+
+
+async def test_warm_sites_rejected_without_usable_session(
+    settings: Settings,
+    expired_storage_state: dict[str, Any],
+) -> None:
+    async def warmer(*_args: Any) -> dict[str, Any]:
+        raise AssertionError("warmer must not run without a live identity")
+
+    auth = AuthService(settings, site_warmer=warmer)
+    assert await auth.warm_sites((JIRA_SITE,)) is False
+    auth.store.save(expired_storage_state)
+    assert await auth.warm_sites((JIRA_SITE,)) is False
+
+
+async def test_warm_sites_disabled_in_bypass(tmp_path: Path) -> None:
+    async def warmer(*_args: Any) -> dict[str, Any]:
+        raise AssertionError("warmer must not run in bypass mode")
+
+    settings = Settings(state_dir=tmp_path, require_sso=False)
+    auth = AuthService(settings, site_warmer=warmer)
+    assert await auth.warm_sites((JIRA_SITE,)) is False

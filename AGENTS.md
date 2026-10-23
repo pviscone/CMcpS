@@ -207,7 +207,7 @@ M1 and M2 are implemented and green. M1 (auth foundation) is unchanged in behavi
 - `cmsresults_*` (4): static-HTML fallback for cms-results (search backend was persistently 5xx during discovery); groups, per-group papers, paper detail (abstract/links/figures), download. Live-verified.
 - `twiki_*` (4): search (SSO), raw page with `%META` parsing (author/version/attachments), public-web topic list, attachment download. Anonymous paths live-verified.
 - `cmsonline_*` (5): OMSS API (`cmsoms.cern.ch/agg/api/v1`) — portal itself is a JS WebCenter with no REST surface; runs/fills/lumisections/version. 401 anonymous; fixture-tested only, live pending SSO.
-- `jira_*` (3): its.cern.ch REST v2 — JQL search (anonymous OK), issue detail, project. Fixture-tested; public search verified reachable.
+- `jira_*` (3): its.cern.ch REST v2 — JQL search (anonymous OK for public projects), issue detail, project. Sign-in captures the Jira session via the silent OIDC handshake; adapter re-warms on 401/403 and flags public-only scope in `SearchResult.note`.
 - `mcm_*` (4): McM public REST index (no SSO); get request (empty-`results` → not-found), status+approval, output datasets, exact-dataset produces lookup. All live-verified.
 - `das_*` (2): DAS QL search + exact dataset info; SSO-fronted (401 anonymous), fixture-tested.
 - `gocms_*` (3): goCMS is the CMS **shortlink service** (FastAPI, public OpenAPI) — not the assumed docs wiki. Links search/list/detail + tags. Live-verified.

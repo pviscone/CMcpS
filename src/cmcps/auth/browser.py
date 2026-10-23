@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -157,34 +157,141 @@ async def _capture_bearer_services(
 # authenticated context completes the silent OAuth2 handshake and drops
 # `_forum_session`/`_t` cookies into the context. Keep in sync with the
 # login-required sites in `cmcps.adapters.discourse.SITES`.
-_COOKIE_ONLY_SITES = (
-    "https://cms-talk.web.cern.ch",
-    "https://cms-pub-talk.web.cern.ch",
+# Jira (its.cern.ch) anonymous pages render publicly; the login page
+# (/jira/login.jsp) carries the auto-advance to the auth.cern.ch OIDC flow
+# (client jira-central-prod) in an inline script, and the handshake drops
+# JSESSIONID and a logged-in atlassian.xsrf.token (value ends with "_lin";
+# "_lout" when logged out). Keep in sync with the warm-up URLs in
+# `cmcps.adapters.jira._SESSION_WARM_URLS`.
+JIRA_SITE_URL = "https://its.cern.ch/jira/login.jsp?os_destination=%2Fsecure%2FDashboard.jspa"
+_JIRA_COOKIE_URL = "https://its.cern.ch/jira/"
+
+SiteReadiness = Callable[[BrowserContext], Awaitable[bool]]
+SiteAdvance = Callable[[Page], Awaitable[None]]
+
+
+async def _jira_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds a logged-in Jira session on its.cern.ch."""
+    try:
+        cookies = await context.cookies(_JIRA_COOKIE_URL)
+    except PlaywrightError:
+        return False
+    for cookie in cookies:
+        if cookie.get("name") == "atlassian.xsrf.token":
+            return str(cookie.get("value", "")).endswith("_lin")
+    return False
+
+
+async def _advance_jira_sso(page: Page) -> None:
+    """Move Jira's login page into its auth.cern.ch OIDC handshake.
+
+    login.jsp carries the OIDC authorize URL in an inline script; following it
+    explicitly is deterministic across headed/headless runs. The
+    page-planted JSESSIONID ties the handshake to this session.
+    """
+    try:
+        if urlsplit(page.url).hostname != "its.cern.ch":
+            # The login page's own script already started the handshake.
+            return
+        href: str | None = await page.evaluate(
+            """() => {
+                const scripts = [...document.scripts].map(s => s.textContent).join(' ');
+                const match = scripts.match(/https:\\/\\/auth\\.cern\\.ch[^"'\\s]+/);
+                return match ? match[0] : null;
+            }"""
+        )
+        if href is None:
+            # Already advanced (or the dashboard rendered as authenticated).
+            return
+        await page.goto(href, wait_until="domcontentloaded", timeout=_COOKIE_CAPTURE_TIMEOUT_MS)
+    except PlaywrightError:
+        logger.debug("Jira SSO advance failed", exc_info=True)
+
+
+_COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], ...] = (
+    ("https://cms-talk.web.cern.ch", None, None),
+    ("https://cms-pub-talk.web.cern.ch", None, None),
+    (JIRA_SITE_URL, _advance_jira_sso, _jira_session_ready),
 )
 
 _COOKIE_CAPTURE_TIMEOUT_MS = 30_000
+_COOKIE_READY_TIMEOUT_SECONDS = 30.0
+
+
+async def _visit_cookie_site(
+    context: BrowserContext,
+    site_url: str,
+    advance: SiteAdvance | None,
+    ready: SiteReadiness | None,
+) -> None:
+    """Visit one cookie-only site and, when given, wait for its session to materialize."""
+    page: Page | None = None
+    try:
+        page = await context.new_page()
+        await page.goto(
+            site_url,
+            wait_until="load",
+            timeout=_COOKIE_CAPTURE_TIMEOUT_MS,
+        )
+        if advance is not None:
+            await advance(page)
+        if ready is None:
+            await asyncio.sleep(1.0)  # let the last redirects' Set-Cookie land
+            return
+        deadline = asyncio.get_running_loop().time() + _COOKIE_READY_TIMEOUT_SECONDS
+        while not page.is_closed() and not await ready(context):
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.debug("Cookie-readiness timed out for %s", site_url)
+                break
+            await asyncio.sleep(0.5)
+    except PlaywrightError:
+        logger.debug("Cookie capture failed for %s", site_url, exc_info=True)
+    finally:
+        if page is not None:
+            await _close_resource(page, "cookie-capture page")
 
 
 async def _capture_cookie_only_sites(context: BrowserContext) -> None:
     """Visit each cookie-only SSO site so its session cookies land in the context.
 
-    Failures are non-fatal — sign-in succeeds without a forum session and the
+    Failures are non-fatal — sign-in succeeds without the site session and the
     affected adapter reports AUTH_REQUIRED on 401/403.
     """
-    for site_url in _COOKIE_ONLY_SITES:
-        page: Page | None = None
-        try:
-            page = await context.new_page()
-            await page.goto(
-                site_url,
-                wait_until="load",
-                timeout=_COOKIE_CAPTURE_TIMEOUT_MS,
-            )
-        except PlaywrightError:
-            logger.debug("Cookie capture failed for %s", site_url, exc_info=True)
-        finally:
-            if page is not None:
-                await _close_resource(page, "cookie-capture page")
+    for site_url, advance, ready in _COOKIE_ONLY_SITES:
+        await _visit_cookie_site(context, site_url, advance, ready)
+
+
+async def warm_cookie_sites(
+    settings: Settings,
+    storage_state: dict[str, Any],
+    urls: Sequence[str],
+) -> dict[str, Any] | None:
+    """Re-drive cookie-only SSO sites headlessly and return refreshed storage state.
+
+    Used by adapters when a cookie-only site's session expired before the
+    Keycloak identity did: the stored identity makes each site's silent
+    handshake succeed again. Only configured ``_COOKIE_ONLY_SITES`` matching
+    ``urls`` are warmed. Returns the refreshed storage state (caller
+    persists), or ``None`` when there is nothing to do or the browser failed.
+    """
+    targets = [(url, advance, ready) for url, advance, ready in _COOKIE_ONLY_SITES if url in urls]
+    if not targets:
+        return None
+    browser: Browser | None = None
+    context: BrowserContext | None = None
+    try:
+        async with async_playwright() as playwright:
+            browser = await _launch_browser(settings, playwright, headless=True)
+            context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
+            for site_url, advance, ready in targets:
+                await _visit_cookie_site(context, site_url, advance, ready)
+            return await context.storage_state()
+    except (PlaywrightError, BrowserUnavailableError):
+        logger.debug("Cookie-site warm-up failed for %s", list(urls), exc_info=True)
+        return None
+    finally:
+        await _close_resource(context, "warm-up context")
+        await _close_resource(browser, "warm-up browser")
 
 
 async def collect_sso_state(

@@ -94,7 +94,7 @@ Public API; no service token needed.
 
 GitLab API access does **not** use the CERN SSO browser session: two independent reasons.
 
-- The SSO sign-in flow never visits `gitlab.cern.ch`, so the stored session state never contains `_gitlab_session` (or any GitLab-scoped cookie). Verified: the persisted session holds cookies only for `auth.cern.ch`, `its.cern.ch`, `indico.cern.ch`, and `cmsonline.cern.ch`.
+- The SSO sign-in flow never visits `gitlab.cern.ch`, so the stored session state never contains `_gitlab_session` (or any GitLab-scoped cookie). The persisted session holds cookies only for `auth.cern.ch` and the SSO-warmed sites (Indico, its.cern.ch, the CMS forums, the HLT-info and CMSFence apps, ...).
 - Even with a session cookie, the GitLab API ignores browser cookies for most endpoints; requests stay anonymous and private projects answer `404`.
 
 Facts about `CMCPS_GITLAB_TOKEN`:
@@ -183,7 +183,13 @@ The portal's ELog portlet proxies a DataTables JSON backend at `POST /Elog/json.
 
 ## CERN Jira tools (its.cern.ch/jira)
 
-Standard Jira Server REST v2. Public projects readable anonymously; restricted ones need SSO.
+Standard Jira Server REST v2. Public projects readable anonymously; restricted
+ones need a Jira session cookie. its.cern.ch logs in through a silent
+auth.cern.ch OIDC handshake (client `jira-central-prod`): `cern_auth_sign_in`
+captures that session, and the adapter re-warms it headlessly when a request
+hits 401/403 (the Jira session can expire before the Keycloak identity).
+Without a live session, `jira_search` still answers but marks the result with
+a public-only `note`.
 
 - `jira_search` — JQL search with `start_at`/`max_results` paging; summary-level fields.
 - `jira_get_issue` — full issue by key: description, comments, attachments, people, dates.

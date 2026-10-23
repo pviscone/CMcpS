@@ -92,6 +92,8 @@ def make_client(tmp_path: Path, recorder: Recorder) -> SafeHttpClient:
 
 async def test_search_builds_jql_envelope(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/jira/rest/api/2/myself":
+            return httpx.Response(200, json={"name": "jdoe"})
         assert request.url.path == "/jira/rest/api/2/search"
         params = request.url.params
         assert params["jql"] == "project = CMSTRACK"
@@ -166,3 +168,89 @@ async def test_get_project(tmp_path: Path) -> None:
     assert result["key"] == "CMSTRACK"
     assert result["lead"] == "Lead Person"
     assert result["issue_types"] == ["Bug", "Task"]
+
+
+async def test_search_notes_anonymous_visibility_without_session(tmp_path: Path) -> None:
+    """A dead Jira session (401 myself) downgrades to public scope with a note."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/jira/rest/api/2/myself":
+            return httpx.Response(401)
+        return httpx.Response(200, json=SEARCH_PAYLOAD)
+
+    recorder = Recorder(handler)
+    client = make_client(tmp_path, recorder)  # SSO bypass: no browser warm-up possible
+    result = await jira.search_issues(client, jql="project = ADAPTYST")
+    assert result.items  # search still runs anonymously
+    assert result.note is not None
+    assert "public" in result.note
+    myself_requests = [r for r in recorder.requests if r.url.path == "/jira/rest/api/2/myself"]
+    assert len(myself_requests) == 1  # no warm retry when warm-up is impossible
+
+
+async def test_search_with_live_session_has_no_anonymous_note(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/jira/rest/api/2/myself":
+            return httpx.Response(200, json={"name": "jdoe"})
+        return httpx.Response(200, json=SEARCH_PAYLOAD)
+
+    recorder = Recorder(handler)
+    client = make_client(tmp_path, recorder)
+    result = await jira.search_issues(client, jql="project = ADAPTYST")
+    assert result.note is None
+
+
+async def test_search_error_body_becomes_diagnostic(tmp_path: Path) -> None:
+    """Jira's errorMessages payload must reach the raised error (was discarded)."""
+    payload = {
+        "errorMessages": ["The value 'CMSTRACK' does not exist for the field 'project'."],
+        "errors": {},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/jira/rest/api/2/myself":
+            return httpx.Response(200, json={"name": "jdoe"})
+        return httpx.Response(400, json=payload)
+
+    recorder = Recorder(handler)
+    client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as excinfo:
+        await jira.search_issues(client, jql="project = CMSTRACK")
+    assert "does not exist for the field 'project'" in excinfo.value.message
+    assert excinfo.value.status_code == 400
+
+
+async def test_401_error_instructions_point_to_reauthentication(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _r: httpx.Response(401))
+    client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as excinfo:
+        await jira.get_issue(client, issue_key="CMSTRACK-42")
+    assert excinfo.value.instructions is not None
+    assert "cern_auth_reauthenticate" in excinfo.value.instructions
+
+
+async def test_get_issue_rewarms_session_and_retries_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """401 on the issue endpoint triggers one warm-up followed by one retry."""
+    calls = {"issue": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["issue"] += 1
+        status = 401 if calls["issue"] == 1 else 200
+        payload = ISSUE_PAYLOAD if status == 200 else None
+        return httpx.Response(status, json=payload)
+
+    recorder = Recorder(handler)
+    client = make_client(tmp_path, recorder)
+    warmed: list[list[str] | tuple[str, ...]] = []
+
+    async def fake_warm(urls: list[str] | tuple[str, ...]) -> bool:
+        warmed.append(urls)
+        return True
+
+    monkeypatch.setattr(client, "warm_sites", fake_warm)
+    result = await jira.get_issue(client, issue_key="CMSTRACK-42")
+    assert result["key"] == "CMSTRACK-42"
+    assert calls["issue"] == 2
+    assert warmed == [jira._SESSION_WARM_URLS]

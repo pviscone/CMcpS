@@ -5,7 +5,12 @@ Endpoint type: standard Jira REST API v2 under ``/jira/rest/api/2``:
 - ``GET /rest/api/2/serverInfo`` — anonymous (verified).
 - ``GET /rest/api/2/search?jql=...&startAt=..&maxResults=..&fields=..`` —
   anonymous for public projects (verified); restricted projects/issues
-  require CERN SSO, which the shared client injects.
+  require a Jira session cookie. its.cern.ch authenticates through a silent
+  auth.cern.ch OIDC handshake (client jira-central-prod); the sign-in flow
+  captures that session and the adapter re-warms it on 401/403 before
+  falling back to anonymous scope.
+- ``GET /rest/api/2/myself`` — cheap session probe used to detect
+  anonymous-only visibility before searching.
 - ``GET /rest/api/2/issue/<KEY>?fields=..`` — issue detail; description is
   plain text (Jira Server), attachments listed with content URLs.
 - ``GET /rest/api/2/project/<KEY>`` — project metadata.
@@ -38,9 +43,23 @@ _ISSUE_FIELDS = (
 )
 _MAX_RESULTS_LIMIT = 100
 _NOT_FOUND = 404
+_UNAUTHORIZED_STATUSES = frozenset({401, 403})
 _DESCRIPTION_LIMIT = 20000
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 _PROJECT_RE = re.compile(r"^[A-Z][A-Z0-9]+$")
+_MYSELF_URL = f"{BASE}/myself"
+_HTTP_OK = 200
+# Keep in sync with `cmcps.auth.browser.JIRA_SITE_URL`: the Jira login page,
+# whose inline script advances to Jira's silent auth.cern.ch OIDC handshake
+# inside an SSO context.
+_SESSION_WARM_URLS = (
+    "https://its.cern.ch/jira/login.jsp?os_destination=%2Fsecure%2FDashboard.jspa",
+)
+_ANONYMOUS_NOTE = (
+    "No live Jira session: results are limited to anonymous/public visibility. "
+    "Call cern_auth_sign_in (or cern_auth_reauthenticate) and retry for "
+    "restricted projects and issues."
+)
 
 
 def _person(fields: Any) -> str | None:
@@ -55,7 +74,7 @@ def _sub(value: Any) -> list[str]:
     return [str(v.get("name")) for v in value if isinstance(v, dict) and v.get("name")]
 
 
-def _issue_item(base: str, issue: dict[str, Any], *, detail: bool) -> dict[str, Any]:
+def _issue_item(issue: dict[str, Any], *, detail: bool) -> dict[str, Any]:
     fields = issue.get("fields") or {}
     project = fields.get("project") or {}
     status = fields.get("status") or {}
@@ -82,15 +101,12 @@ def _issue_item(base: str, issue: dict[str, Any], *, detail: bool) -> dict[str, 
         for att in fields.get("attachment") or []:
             if not isinstance(att, dict):
                 continue
-            content = att.get("content")
-            if isinstance(content, str) and content.startswith(f"{base}/jira/"):
-                content = content.replace(f"{base}/jira/", "https://its.cern.ch/jira/", 1)
             attachments.append(
                 {
                     "filename": att.get("filename"),
                     "size_bytes": att.get("size"),
                     "mime_type": att.get("mimeType"),
-                    "url": content,
+                    "url": att.get("content"),
                 }
             )
         comments = ((fields.get("comment") or {}).get("comments") or [])[:50]
@@ -113,6 +129,25 @@ def _issue_item(base: str, issue: dict[str, Any], *, detail: bool) -> dict[str, 
     return item
 
 
+async def _jira_session_ok(client: SafeHttpClient) -> bool:
+    """Whether the current cookie jar authenticates against Jira."""
+    response = await client.request("GET", _MYSELF_URL)
+    return response.status_code == _HTTP_OK
+
+
+async def _ensure_jira_session(client: SafeHttpClient) -> bool:
+    """Check the Jira session, re-warming it once through a headless SSO drive.
+
+    Returns whether Jira requests will run authenticated. ``False`` means the
+    caller must fall back to anonymous/public visibility.
+    """
+    if await _jira_session_ok(client):
+        return True
+    if await client.warm_sites(_SESSION_WARM_URLS):
+        return await _jira_session_ok(client)
+    return False
+
+
 async def search_issues(
     client: SafeHttpClient,
     *,
@@ -133,6 +168,7 @@ async def search_issues(
         )
     if start_at < 0:
         raise InvalidInputError("start_at must be >= 0")
+    authenticated = await _ensure_jira_session(client)
     response = await client.request(
         "GET",
         f"{BASE}/search",
@@ -145,7 +181,7 @@ async def search_issues(
     )
     payload = json_body(response, source="cern-jira search")
     issues = payload.get("issues") or []
-    items = [_issue_item(BASE, i, detail=False) for i in issues if isinstance(i, dict)]
+    items = [_issue_item(i, detail=False) for i in issues if isinstance(i, dict)]
     total = payload.get("total")
     return SearchResult(
         source=SOURCE,
@@ -155,6 +191,7 @@ async def search_issues(
         page=(start_at // max_results) + 1,
         size=len(items),
         has_more=isinstance(total, int) and start_at + len(items) < total,
+        note=None if authenticated else _ANONYMOUS_NOTE,
     )
 
 
@@ -171,6 +208,12 @@ async def get_issue(
             instructions="Expected format like CMSTRACK-123 from jira_search results.",
         )
     response = await client.request("GET", f"{BASE}/issue/{key}", params={"fields": _ISSUE_FIELDS})
+    if response.status_code in _UNAUTHORIZED_STATUSES and await client.warm_sites(
+        _SESSION_WARM_URLS
+    ):
+        response = await client.request(
+            "GET", f"{BASE}/issue/{key}", params={"fields": _ISSUE_FIELDS}
+        )
     if response.status_code == _NOT_FOUND:
         raise UpstreamError(
             f"issue {key} not found or not visible",
@@ -184,7 +227,7 @@ async def get_issue(
         )
     return {
         "source": SOURCE,
-        **_issue_item(BASE, payload, detail=True),
+        **_issue_item(payload, detail=True),
     }
 
 
@@ -201,6 +244,10 @@ async def get_project(
             instructions="Project keys are uppercase Jira codes like CMSTRACK.",
         )
     response = await client.request("GET", f"{BASE}/project/{key}")
+    if response.status_code in _UNAUTHORIZED_STATUSES and await client.warm_sites(
+        _SESSION_WARM_URLS
+    ):
+        response = await client.request("GET", f"{BASE}/project/{key}")
     if response.status_code == _NOT_FOUND:
         raise UpstreamError(
             f"project {key} not found or not visible",

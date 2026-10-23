@@ -31,7 +31,9 @@ def register_jira_tools(
             "(discourse_search) or GitLab repository issues "
             "(gitlab_search_issues). Example: project = CMSTRACK AND text ~ "
             "'calibration'. Returns issue summaries with status, assignee, "
-            "dates; page with start_at."
+            "dates; page with start_at. Visibility follows your CERN account: "
+            "without a live Jira session results are public-only and the note "
+            "field says so (re-sign in to fix)."
         ),
     )
     async def jira_search(

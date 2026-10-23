@@ -15,6 +15,56 @@ from cmcps.contracts.errors import UpstreamError
 from cmcps.net.client import SafeResponse
 
 _MIN_ERROR_STATUS = 400
+_AUTH_STATUSES = frozenset({401, 403})
+_ERROR_DETAIL_LIMIT = 500
+
+
+def _error_detail(content: bytes) -> str:
+    """Extract a bounded, single-line diagnostic from an error response body."""
+    text = content.decode("utf-8", errors="replace").strip()
+    if not text:
+        return ""
+    try:
+        body = json.loads(text)
+    except json.JSONDecodeError:
+        body = None
+    if isinstance(body, dict):
+        # Jira-style: {"errorMessages": [...], "errors": {field: msg}}
+        messages = body.get("errorMessages")
+        errors = body.get("errors")
+        detail = "; ".join(str(m) for m in messages) if isinstance(messages, list) else ""
+        if isinstance(errors, dict) and errors:
+            detail = "; ".join(filter(None, [detail, str(errors)]))
+        if detail:
+            return " ".join(detail.split())[:_ERROR_DETAIL_LIMIT]
+    return " ".join(text.split())[:_ERROR_DETAIL_LIMIT]
+
+
+def json_body(response: SafeResponse, *, source: str) -> Any:
+    """Decode a JSON backend response or raise a structured upstream error."""
+    if response.status_code >= _MIN_ERROR_STATUS:
+        message = f"{source} request failed with status {response.status_code} for {response.url}"
+        if detail := _error_detail(response.content):
+            message = f"{message}: {detail}"
+        if response.status_code in _AUTH_STATUSES:
+            instructions = (
+                "The session is missing or expired for this site; "
+                "re-sign in with cern_auth_reauthenticate and retry."
+            )
+        else:
+            instructions = "Check the request arguments and try again."
+        raise UpstreamError(message, status_code=response.status_code, instructions=instructions)
+    content_type = response.headers.get("content-type", "")
+    try:
+        return json.loads(response.content.decode("utf-8", errors="replace"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise UpstreamError(
+            f"{source} returned a non-JSON body (content-type: {content_type or 'unknown'})",
+            instructions=(
+                "The service may require interactive browser authentication. "
+                "Sign in with cern_auth_sign_in and retry."
+            ),
+        ) from exc
 
 
 class _TextExtractor(HTMLParser):
@@ -55,24 +105,3 @@ def html_to_text(html: str, *, limit: int = 20000) -> str:
     parser = _TextExtractor()
     parser.feed(html)
     return parser.text()[:limit]
-
-
-def json_body(response: SafeResponse, *, source: str) -> Any:
-    """Decode a JSON backend response or raise a structured upstream error."""
-    if response.status_code >= _MIN_ERROR_STATUS:
-        raise UpstreamError(
-            f"{source} request failed with status {response.status_code} for {response.url}",
-            status_code=response.status_code,
-            instructions="Check the request arguments and try again.",
-        )
-    content_type = response.headers.get("content-type", "")
-    try:
-        return json.loads(response.content.decode("utf-8", errors="replace"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise UpstreamError(
-            f"{source} returned a non-JSON body (content-type: {content_type or 'unknown'})",
-            instructions=(
-                "The service may require interactive browser authentication. "
-                "Sign in with cern_auth_sign_in and retry."
-            ),
-        ) from exc
