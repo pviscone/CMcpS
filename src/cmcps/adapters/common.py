@@ -1,0 +1,78 @@
+"""Shared helpers for M2 adapters backed by ``SafeHttpClient``.
+
+Adapters receive a ``SafeHttpClient`` (already auth-guarded and policy-bound)
+plus ``Settings`` and return plain JSON-serializable structures. They never
+construct raw requests outside the safety layer.
+"""
+
+from __future__ import annotations
+
+import json
+from html.parser import HTMLParser
+from typing import Any, ClassVar
+
+from cmcps.contracts.errors import UpstreamError
+from cmcps.net.client import SafeResponse
+
+_MIN_ERROR_STATUS = 400
+
+
+class _TextExtractor(HTMLParser):
+    """Strip small HTML fragments (posts, abstracts) into plain text."""
+
+    _BLOCK_TAGS: ClassVar[frozenset[str]] = frozenset(
+        {"p", "br", "div", "li", "pre", "blockquote", "h1", "h2", "h3", "h4", "tr", "td"}
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        if tag in ("style", "script"):
+            self._skip_depth += 1
+        elif tag in self._BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("style", "script") and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag in self._BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            self._parts.append(data)
+
+    def text(self) -> str:
+        lines = [" ".join(line.split()) for line in "".join(self._parts).splitlines()]
+        return "\n".join(line for line in lines if line)
+
+
+def html_to_text(html: str, *, limit: int = 20000) -> str:
+    """Convert an HTML fragment to whitespace-normalized plain text."""
+    parser = _TextExtractor()
+    parser.feed(html)
+    return parser.text()[:limit]
+
+
+def json_body(response: SafeResponse, *, source: str) -> Any:
+    """Decode a JSON backend response or raise a structured upstream error."""
+    if response.status_code >= _MIN_ERROR_STATUS:
+        raise UpstreamError(
+            f"{source} request failed with status {response.status_code} for {response.url}",
+            status_code=response.status_code,
+            instructions="Check the request arguments and try again.",
+        )
+    content_type = response.headers.get("content-type", "")
+    try:
+        return json.loads(response.content.decode("utf-8", errors="replace"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise UpstreamError(
+            f"{source} returned a non-JSON body (content-type: {content_type or 'unknown'})",
+            instructions=(
+                "The service may require interactive browser authentication. "
+                "Sign in with cern_auth_sign_in and retry."
+            ),
+        ) from exc
