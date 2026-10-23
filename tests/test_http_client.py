@@ -1,0 +1,214 @@
+"""Policy-bound HTTP client tests using in-memory transports."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from cmcps.auth.service import AuthService
+from cmcps.auth.store import SessionStore
+from cmcps.config.settings import Settings
+from cmcps.contracts.errors import PolicyViolationError, RequestTooLargeError
+from cmcps.net.client import SafeHttpClient
+
+
+def _client_with_transport(
+    handler,
+    settings: Settings,
+    *,
+    authenticated_state: dict[str, Any] | None = None,
+) -> tuple[SafeHttpClient, list[httpx.Request]]:
+    requests: list[httpx.Request] = []
+
+    def recorder(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return handler(request)
+
+    auth = AuthService(settings)
+    if authenticated_state is not None:
+        SessionStore(settings.session_path).save(authenticated_state)
+    client = SafeHttpClient(
+        settings,
+        auth,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(recorder)),
+    )
+    return client, requests
+
+
+async def test_post_is_rejected_before_transport(settings: Settings) -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200)
+
+    client, _ = _client_with_transport(handler, settings)
+    with pytest.raises(PolicyViolationError):
+        await client.request("POST", "https://service.cern.ch/data", authenticated=False)
+    assert calls == []
+
+
+async def test_sso_cookie_is_destination_scoped(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b'{"ok":true}',
+            headers={"Set-Cookie": "server-secret=value"},
+        )
+
+    client, requests = _client_with_transport(
+        handler,
+        settings,
+        authenticated_state=valid_storage_state,
+    )
+    response = await client.request("GET", "https://service.cern.ch/data")
+
+    assert response.status_code == 200
+    assert response.content == b'{"ok":true}'
+    assert requests[0].headers["cookie"] == "SERVICE=service-secret-value"
+    assert "set-cookie" not in response.headers
+
+
+async def test_cross_domain_redirect_is_rejected_before_cookie_reuse(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "https://evil.example/collect"})
+
+    client, requests = _client_with_transport(
+        handler,
+        settings,
+        authenticated_state=valid_storage_state,
+    )
+    with pytest.raises(PolicyViolationError):
+        await client.request("GET", "https://service.cern.ch/start")
+    assert len(requests) == 1
+
+
+async def test_allowlisted_redirect_is_followed(settings: Settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"Location": "/done"})
+        return httpx.Response(200, content=b"done")
+
+    settings = settings.model_copy(update={"require_sso": False})
+    client, requests = _client_with_transport(handler, settings)
+    response = await client.request(
+        "GET",
+        "https://service.cern.ch/start",
+        authenticated=True,
+    )
+    assert response.content == b"done"
+    assert [request.url.path for request in requests] == ["/start", "/done"]
+
+
+async def test_response_size_limit_is_enforced(tmp_path: Path) -> None:
+    settings = Settings(state_dir=tmp_path, require_sso=False, max_response_bytes=1024)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 1025)
+
+    client, _ = _client_with_transport(handler, settings)
+    with pytest.raises(RequestTooLargeError):
+        await client.request("GET", "https://service.cern.ch/large")
+
+
+async def test_download_is_bounded_and_owner_readable(tmp_path: Path) -> None:
+    settings = Settings(state_dir=tmp_path / "state", require_sso=False)
+    destination = settings.download_dir / "artifact.bin"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"binary-content")
+
+    client, requests = _client_with_transport(handler, settings)
+    result = await client.download(
+        "https://service.cern.ch/file.bin",
+        destination,
+        authenticated=False,
+    )
+    assert result == destination
+    assert result.read_bytes() == b"binary-content"
+    assert (result.stat().st_mode & 0o777) == 0o600
+    assert requests[0].method == "GET"
+    assert "cookie" not in requests[0].headers
+
+
+async def test_download_bounds_redirects_without_creating_artifact(tmp_path: Path) -> None:
+    settings = Settings(state_dir=tmp_path / "state", require_sso=False)
+    destination = settings.download_dir / "redirected.bin"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "/target"}, content=b"ignored")
+
+    client, requests = _client_with_transport(handler, settings)
+    with pytest.raises(PolicyViolationError):
+        await client.download(
+            "https://service.cern.ch/start",
+            destination,
+            authenticated=False,
+        )
+    assert len(requests) == settings.max_redirects + 1
+    assert not destination.exists()
+    assert list(settings.download_dir.glob(".redirected.bin.*")) == []
+
+
+async def test_download_follows_redirect_and_writes_artifact(tmp_path: Path) -> None:
+    settings = Settings(state_dir=tmp_path / "state", require_sso=False)
+    destination = settings.download_dir / "redirected.bin"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"Location": "/final"})
+        assert request.url.path == "/final"
+        return httpx.Response(200, content=b"payload")
+
+    client, requests = _client_with_transport(handler, settings)
+    final = await client.download(
+        "https://service.cern.ch/start",
+        destination,
+        authenticated=False,
+    )
+    assert len(requests) == 2
+    assert final.read_bytes() == b"payload"
+
+
+async def test_head_large_content_length_is_allowed(tmp_path: Path) -> None:
+    settings = Settings(state_dir=tmp_path, require_sso=False, max_response_bytes=1024)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Content-Length": "10485760"})
+
+    client, requests = _client_with_transport(handler, settings)
+    response = await client.request(
+        "HEAD",
+        "https://service.cern.ch/large-file",
+        authenticated=False,
+    )
+    assert response.status_code == 200
+    assert response.content == b""
+    assert requests[0].method == "HEAD"
+
+
+async def test_download_rejects_destination_outside_managed_dir(tmp_path: Path) -> None:
+    settings = Settings(state_dir=tmp_path / "state", require_sso=False)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"must-not-arrive")
+
+    client, requests = _client_with_transport(handler, settings)
+    with pytest.raises(PolicyViolationError) as exc_info:
+        await client.download(
+            "https://service.cern.ch/file.bin",
+            tmp_path / "outside.bin",
+            authenticated=False,
+        )
+    assert requests == []
+    assert str(settings.download_dir) not in (exc_info.value.instructions or "")
+    assert not (tmp_path / "outside.bin").exists()

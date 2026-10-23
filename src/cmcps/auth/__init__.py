@@ -1,0 +1,1 @@
+"""CERN SSO authentication components."""
