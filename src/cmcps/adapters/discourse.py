@@ -15,10 +15,13 @@ JSON API (``.json`` suffixed routes):
 - ``GET /uploads/...`` — attachments/images (bounded download).
 
 Endpoint type: documented public Discourse JSON API. root-forum and
-geant4-forum are anonymously readable; the two CMS forums sit behind the
-CERN SSO OAuth2 flow, served through the shared cookie-injecting client.
-No native search-relevance scores or global offset cursors exist; paging is
-1-based ``page`` with ``more_full_page_results`` / ``more_topics_url`` flags.
+geant4-forum are anonymously readable; every page of the two CMS forums
+redirects to ``/auth/oauth2_basic`` (anonymous 403), so their session
+cookies (``_forum_session``/``_t``) are captured by the SSO sign-in flow
+(``cmcps.auth.browser._COOKIE_ONLY_SITES``) and injected by the shared
+cookie client. No native search-relevance scores or global offset cursors
+exist; paging is 1-based ``page`` with ``more_full_page_results`` /
+``more_topics_url`` flags.
 """
 
 from __future__ import annotations
@@ -29,9 +32,9 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from cmcps.adapters.common import html_to_text, json_body
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
+from cmcps.contracts.errors import AuthRequiredError, InvalidInputError, UpstreamError
 from cmcps.contracts.results import SearchResult
-from cmcps.net.client import SafeHttpClient
+from cmcps.net.client import SafeHttpClient, SafeResponse
 
 SOURCE_PREFIX = "discourse"
 
@@ -41,6 +44,20 @@ SITES: dict[str, str] = {
     "root-forum": "https://root-forum.cern.ch",
     "geant4-forum": "https://geant4-forum.web.cern.ch",
 }
+
+# The two CMS forums are fully login-required (anonymous 403 everywhere);
+# session cookies are captured into the SSO storage state by
+# `cmcps.auth.browser._COOKIE_ONLY_SITES`.
+_SSO_SITES = frozenset({"cms-talk", "cms-pub-talk"})
+
+
+def _guard_session(response: SafeResponse, *, site: str) -> None:
+    """Translate an SSO-forum 401/403 into an actionable auth error."""
+    if site in _SSO_SITES and response.status_code in (401, 403):
+        raise AuthRequiredError(
+            f"{site} rejected the request with status {response.status_code}: "
+            "the stored SSO state has no (expired) Discourse session cookies"
+        )
 
 _LISTINGS = ("latest", "top")
 _TOP_PERIODS = ("all", "yearly", "quarterly", "monthly", "weekly", "daily")
@@ -126,6 +143,7 @@ async def search(
     """Full-text search of one forum's posts and topics."""
     base = _site_box(site)
     response = await client.request("GET", f"{base}/search.json", params={"q": query, "page": page})
+    _guard_session(response, site=site)
     payload = json_body(response, source=f"{site} search")
     items = _search_items(base, payload if isinstance(payload, dict) else {})
     grouped = payload.get("grouped_search_result") or {}
@@ -175,6 +193,7 @@ async def list_topics(
         if listing == "top":
             params["period"] = period
     response = await client.request("GET", url, params=params)
+    _guard_session(response, site=site)
     payload = json_body(response, source=f"{site} topic list")
     topic_list = payload.get("topic_list") or {}
     topics = topic_list.get("topics") or []
@@ -198,6 +217,7 @@ async def list_categories(
     """Category tree of one forum, with topic/post counts."""
     base = _site_box(site)
     response = await client.request("GET", f"{base}/categories.json")
+    _guard_session(response, site=site)
     payload = json_body(response, source=f"{site} categories")
     categories = (payload.get("category_list") or {}).get("categories") or []
     items = [
@@ -254,6 +274,7 @@ async def get_topic(
     """Topic detail plus one page of rendered posts (chunked by ~20)."""
     base = _site_box(site)
     response = await client.request("GET", f"{base}/t/{topic_id}.json", params={"page": page})
+    _guard_session(response, site=site)
     payload = json_body(response, source=f"{site} topic {topic_id}")
     if not isinstance(payload, dict) or "post_stream" not in payload:
         raise UpstreamError(
@@ -298,6 +319,7 @@ async def get_post(
     """Single post detail; includes the raw markdown source when public."""
     base = _site_box(site)
     response = await client.request("GET", f"{base}/posts/{post_id}.json")
+    _guard_session(response, site=site)
     payload = json_body(response, source=f"{site} post {post_id}")
     if not isinstance(payload, dict) or payload.get("id") is None:
         raise UpstreamError(
@@ -322,6 +344,7 @@ async def get_user(
     """Public user profile summary (no private fields)."""
     base = _site_box(site)
     response = await client.request("GET", f"{base}/u/{username}.json")
+    _guard_session(response, site=site)
     payload = json_body(response, source=f"{site} user {username}")
     user = payload.get("user") if isinstance(payload, dict) else None
     if not isinstance(user, dict):

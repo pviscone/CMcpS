@@ -11,7 +11,7 @@ import pytest
 from cmcps.adapters import discourse
 from cmcps.auth.service import AuthService
 from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
+from cmcps.contracts.errors import AuthRequiredError, InvalidInputError, UpstreamError
 from cmcps.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -336,3 +336,19 @@ async def test_download_writes_bounded_file(tmp_path: Path) -> None:
     assert saved.read_bytes() == b"binary-content"
     assert result["size_bytes"] == len(b"binary-content")
     assert saved.parent == settings.download_dir
+
+
+async def test_sso_site_403_raises_auth_required(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _request: httpx.Response(403, text="Forbidden"))
+    _settings, client = make_client(tmp_path, recorder)
+    for site in ("cms-talk", "cms-pub-talk"):
+        with pytest.raises(AuthRequiredError):
+            await discourse.search(client, site=site, query="x")
+
+
+async def test_anonymous_site_error_stays_upstream(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _request: httpx.Response(403, text="Forbidden"))
+    _settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as exc_info:
+        await discourse.search(client, site="root-forum", query="x")
+    assert exc_info.value.status_code == 403

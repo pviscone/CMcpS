@@ -151,6 +151,42 @@ async def _capture_bearer_services(
     return captured
 
 
+# SSO-protected sites that only need session cookies (no Bearer tokens).
+# Both CMS Discourse forums alias the full site behind /auth/oauth2_basic, so
+# they return 403 for every anonymous request; visiting them inside the
+# authenticated context completes the silent OAuth2 handshake and drops
+# `_forum_session`/`_t` cookies into the context. Keep in sync with the
+# login-required sites in `cmcps.adapters.discourse.SITES`.
+_COOKIE_ONLY_SITES = (
+    "https://cms-talk.web.cern.ch",
+    "https://cms-pub-talk.web.cern.ch",
+)
+
+_COOKIE_CAPTURE_TIMEOUT_MS = 30_000
+
+
+async def _capture_cookie_only_sites(context: BrowserContext) -> None:
+    """Visit each cookie-only SSO site so its session cookies land in the context.
+
+    Failures are non-fatal — sign-in succeeds without a forum session and the
+    affected adapter reports AUTH_REQUIRED on 401/403.
+    """
+    for site_url in _COOKIE_ONLY_SITES:
+        page: Page | None = None
+        try:
+            page = await context.new_page()
+            await page.goto(
+                site_url,
+                wait_until="load",
+                timeout=_COOKIE_CAPTURE_TIMEOUT_MS,
+            )
+        except PlaywrightError:
+            logger.debug("Cookie capture failed for %s", site_url, exc_info=True)
+        finally:
+            if page is not None:
+                await _close_resource(page, "cookie-capture page")
+
+
 async def collect_sso_state(
     settings: Settings,
     timeout_seconds: int | None = None,
@@ -174,8 +210,12 @@ async def collect_sso_state(
                 wait_until="domcontentloaded",
                 timeout=min(30_000, timeout * 1000),
             )
-            storage_state = await _wait_for_authenticated_state(settings, context, page, timeout)
+            await _wait_for_authenticated_state(settings, context, page, timeout)
             capture = await _capture_bearer_services(settings, context)
+            await _capture_cookie_only_sites(context)
+            # Re-capture after the service visits so Bearer-app and cookie-only
+            # session cookies are persisted too.
+            storage_state = await context.storage_state()
             storage_state["service_tokens"] = capture
             return storage_state
     finally:
