@@ -101,7 +101,31 @@ async def test_search_rejects_bad_args(tmp_path: Path) -> None:
         await twiki.search(client, web="lowerweb", query="x")
     with pytest.raises(InvalidInputError):
         await twiki.search(client, web="CMSPublic", query="x", search_type="fuzzy")
+    with pytest.raises(InvalidInputError):
+        await twiki.search(client, web="CMS,,CMSPublic", query="x")
+    with pytest.raises(InvalidInputError):
+        await twiki.search(client, web="CMS,CMS", query="x")
+    with pytest.raises(InvalidInputError):
+        await twiki.search(client, web="all", query="x")
     assert recorder.requests == []
+
+
+async def test_search_multi_web_sends_web_list(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/twiki/bin/search/CMS/":
+            assert request.url.params["web"] == "CMS,CMSPublic"
+            assert request.url.params["limit"] == "5"
+        else:
+            assert request.url.path == "/twiki/bin/search/CMSPublic/"
+            assert "web" not in request.url.params
+        return httpx.Response(200, text=SEARCH_HTML)
+
+    recorder = Recorder(handler)
+    _settings, client = make_client(tmp_path, recorder)
+    result = await twiki.search(client, web="CMS, CMSPublic", query="higgs", limit=5)
+    assert result.query == "web=CMS,CMSPublic type=keyword: higgs"
+    single = await twiki.search(client, web="CMSPublic", query="higgs")
+    assert single.query == "web=CMSPublic type=keyword: higgs"
 
 
 async def test_list_topics_filters_web_and_dedupes(tmp_path: Path) -> None:

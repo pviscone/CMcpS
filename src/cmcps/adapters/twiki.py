@@ -11,7 +11,9 @@ CERN's TWiki sits behind OIDC SSO for every script except anonymous
   revision) and attachment manifests are only present in the raw source.
 - ``GET /twiki/bin/search/<Web>/?search=...&type=keyword|literal|regex`` —
   search; SSO-protected at CERN. Results render as ``bin/view`` links inside
-  the search template; the adapter extracts ``(web, topic)`` pairs.
+  the search template; the adapter extracts ``(web, topic)`` pairs. Multiple
+  webs in one search are passed as ``?web=Web1,Web2`` (TWiki VarSEARCH
+  comma-list) while the first web stays in the URL path.
 - ``GET /twiki/bin/view/<Web>/WebTopicList`` — full topic list of a web
   (public webs anonymous).
 - ``GET /twiki/pub/<Web>/<Topic>/<file>`` — attachments, SSO for protected
@@ -110,6 +112,26 @@ def _check_topic(topic: str) -> str:
     return topic
 
 
+def _check_webs(web: str) -> list[str]:
+    """Validate one web name or a comma-separated list; returns the ordered list."""
+    webs = []
+    for part in web.split(","):
+        name = part.strip()
+        if not _WEB_RE.fullmatch(name):
+            raise InvalidInputError(
+                f"invalid Twiki web {name!r}",
+                instructions="Webs are CamelCase names like CMS, CMSPublic, Main. Pass one web or a "
+                "comma-separated list, e.g. 'CMS,CMSPublic'.",
+            )
+        if name in webs:
+            raise InvalidInputError(
+                f"duplicate Twiki web {name!r} in list",
+                instructions="List each web once, e.g. 'CMS,CMSPublic'.",
+            )
+        webs.append(name)
+    return webs
+
+
 def _parse_meta_fields(body: str) -> dict[str, str]:
     return {name: value.replace('\\"', '"') for name, value in _META_FIELD_RE.findall(body)}
 
@@ -128,7 +150,7 @@ async def search(
     search_type: str = "keyword",
     limit: int = 50,
 ) -> SearchResult:
-    """Full-text search of one Twiki web; results are view-link references."""
+    """Full-text search of one or more comma-separated Twiki webs; results are view-link references."""
     if not query.strip():
         raise InvalidInputError(
             "query must not be empty",
@@ -139,16 +161,21 @@ async def search(
             f"search_type must be one of {_SEARCH_TYPES}",
             instructions="keyword, literal, or regex.",
         )
-    web = _check_web(web)
+    webs = _check_webs(web)
+    params: dict[str, Any] = {
+        "search": query,
+        "type": search_type,
+        "scope": "text",
+        "limit": limit,
+    }
+    if len(webs) > 1:
+        # Multi-web: base web stays in the path; the full list goes to the
+        # CGI's ``web`` parameter, forwarded to %SEARCH% (TWiki VarSEARCH).
+        params["web"] = ",".join(webs)
     response = await client.request(
         "GET",
-        f"{BASE}/search/{web}/",
-        params={
-            "search": query,
-            "type": search_type,
-            "scope": "text",
-            "limit": limit,
-        },
+        f"{BASE}/search/{webs[0]}/",
+        params=params,
     )
     if response.status_code >= _MIN_ERROR_STATUS:
         raise UpstreamError(
@@ -175,7 +202,7 @@ async def search(
         )
     return SearchResult(
         source=SOURCE,
-        query=f"web={web} type={search_type}: {query}",
+        query=f"web={','.join(webs)} type={search_type}: {query}",
         items=items,
         total_count=len(items),
         page=1,

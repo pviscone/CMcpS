@@ -69,7 +69,9 @@ platform lands. Testing flags: default tests are fixture-only;
 - **Endpoints**:
   - `GET /twiki/bin/search/<Web>/?search=...&type=keyword|literal|regex&limit=N`
     — results rendered as `bin/view` links; extracted with anchor text,
-    deduplicated.
+    deduplicated. Multiple webs in one search are passed as
+    `?web=Web1,Web2` (TWiki VarSEARCH comma-list; first web stays in the
+    URL path); tool default is `CMS,CMSPublic`.
   - `GET /twiki/bin/view/<Web>/<Topic>?raw=on` — raw page; `%META:TOPICINFO`
     (author/date/version), `%META:TOPICPARENT`, `%META:FILEATTACHMENT`
     (name/size/comment) parsed; body = raw wiki text minus META lines.

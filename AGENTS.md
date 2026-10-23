@@ -205,7 +205,7 @@ M1 and M2 are implemented and green. M1 (auth foundation) is unchanged in behavi
 
 - `discourse_*` (7): one generic Discourse adapter with `site` enum (`cms-talk`, `cms-pub-talk`, `root-forum`, `geant4-forum`); search, latest/top/category topics, topic (paged rendered posts, plain text + uploads), post (raw when public), user, bounded download. Live-verified on root-forum (public); CMS forums need SSO.
 - `cmsresults_*` (4): static-HTML fallback for cms-results (search backend was persistently 5xx during discovery); groups, per-group papers, paper detail (abstract/links/figures), download. Live-verified.
-- `twiki_*` (4): search (SSO), raw page with `%META` parsing (author/version/attachments), public-web topic list, attachment download. Anonymous paths live-verified.
+- `twiki_*` (4): search (SSO; defaults to `CMS,CMSPublic` multi-web via comma-separated `web`), raw page with `%META` parsing (author/version/attachments), public-web topic list, attachment download. Anonymous paths live-verified.
 - `cmsonline_*` (5): OMSS API (`cmsoms.cern.ch/agg/api/v1`) — portal itself is a JS WebCenter with no REST surface; runs/fills/lumisections/version. 401 anonymous; fixture-tested only, live pending SSO.
 - `jira_*` (3): its.cern.ch REST v2 — JQL search (anonymous OK for public projects), issue detail, project. Sign-in captures the Jira session via the silent OIDC handshake; adapter re-warms on 401/403 and flags public-only scope in `SearchResult.note`.
 - `mcm_*` (4): McM public REST index (no SSO); get request (empty-`results` → not-found), status+approval, output datasets, exact-dataset produces lookup. All live-verified.

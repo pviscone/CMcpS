@@ -317,6 +317,17 @@ async def test_server_exposes_m1_tools(settings: Settings) -> None:
     assert bounded["maximum"] == 900
 
 
+async def test_twiki_search_defaults_to_cms_web_pair(settings: Settings) -> None:
+    server = build_server(settings)
+    tools = await server.list_tools()
+    search = next(tool for tool in tools if tool.name == "twiki_search")
+    assert search.input_schema["properties"]["web"]["default"] == "CMS,CMSPublic"
+    get_page = next(tool for tool in tools if tool.name == "twiki_get_page")
+    assert "web" in get_page.input_schema["required"]
+    list_topics = next(tool for tool in tools if tool.name == "twiki_list_topics")
+    assert "web" in list_topics.input_schema["required"]
+
+
 async def test_protected_health_returns_structured_auth_required(
     settings: Settings,
 ) -> None:

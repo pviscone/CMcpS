@@ -156,7 +156,7 @@ Static HTML pages of CMS publications and preliminary results (public; no auth).
 
 CERN TWiki runs behind OIDC SSO for everything except anonymous `view` of public webs. `twiki_get_page raw=true` and `twiki_search` need a completed `cern_auth_sign_in`; `twiki_list_topics` and rendered pages work anonymously for public webs.
 
-- `twiki_search` — full-text search of one web (`keyword`/`literal`/`regex`); returns topic references.
+- `twiki_search` — full-text search of one or more webs (`keyword`/`literal`/`regex`); defaults to `CMS,CMSPublic` in a single request (comma-separated `web` list, per TWiki VarSEARCH); returns topic references.
 - `twiki_get_page` — one page: raw wiki source + parsed metadata (author, revision, date, attachments) or anonymous rendered text (`raw=false`).
 - `twiki_list_topics` — topic list of a public web.
 - `twiki_download_attachment` — bounded download of a `/twiki/pub/...` attachment URL.

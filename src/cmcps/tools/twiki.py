@@ -26,19 +26,16 @@ def register_twiki_tools(
     @server.tool(
         name="twiki_search",
         description=(
-            "Full-text search of one CERN TWiki web (e.g. CMSPublic, Main, "
-            "Sandbox) — the legacy CMS internal wiki for documentation pages "
-            "not yet migrated elsewhere. NOT for community Q&A "
-            "(discourse_search), CMS batch docs (cmssearch_search), or MkDocs "
-            "sites (mkdocs_search). search_type is keyword (default), literal, "
-            "or regex. Requires CERN SSO beyond anonymous view pages."
+            "Full-text search of CERN TWiki webs, by default both CMS "
+            "(private collaboration web) and CMSPublic in one request — the "
+            "legacy CMS internal wiki for documentation pages not yet "
+            "migrated elsewhere. NOT for community Q&A (discourse_search), "
+            "CMS batch docs (cmssearch_search), or MkDocs sites "
+            "(mkdocs_search). search_type is keyword (default), literal, or "
+            "regex. Requires CERN SSO beyond anonymous view pages."
         ),
     )
     async def twiki_search(
-        web: Annotated[
-            str,
-            Field(description=("TWiki web name (case-sensitive), e.g. CMSPublic, Main, Sandbox")),
-        ],
         query: str,
         search_type: Annotated[
             Literal["keyword", "literal", "regex"],
@@ -51,6 +48,18 @@ def register_twiki_tools(
             ),
         ] = "keyword",
         limit: Annotated[int, Field(ge=1, le=200)] = 50,
+        web: Annotated[
+            str,
+            Field(
+                description=(
+                    "TWiki web(s) to search (case-sensitive). Defaults to "
+                    "'CMS,CMSPublic' — private CMS web plus public web, SSO "
+                    "required for the private web. Pass a single web (e.g. "
+                    "'CMSPublic' for public docs only) or a comma-separated "
+                    "list, e.g. 'CMS,Main'."
+                )
+            ),
+        ] = "CMS,CMSPublic",
     ) -> ToolEnvelope:
         """Twiki web search."""
         return await guarded(
@@ -72,7 +81,12 @@ def register_twiki_tools(
     async def twiki_get_page(
         web: Annotated[
             str,
-            Field(description="TWiki web name (case-sensitive), e.g. CMSPublic, Main"),
+            Field(
+                description=(
+                    "TWiki web (case-sensitive) — take it from the twiki_search hit's "
+                    "web field (CMS = private, CMSPublic = public), e.g. CMSPublic, Main"
+                )
+            ),
         ],
         topic: Annotated[
             str,
