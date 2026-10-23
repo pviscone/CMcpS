@@ -188,6 +188,25 @@ async def test_get_document(tmp_path: Path) -> None:
     assert request.url.params["limit"] == "100"
 
 
+async def test_get_document_internal_credential_401(tmp_path: Path) -> None:
+    recorder = Recorder(
+        lambda _r: httpx.Response(401, json={"detail": "Invalid internal service credential."})
+    )
+    client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as excinfo:
+        await cmssearch.get_document(client, source_key="cms-twiki", document_id="abc123")
+    assert "internal-credential" in excinfo.value.message
+    assert "twiki_get_page" in (excinfo.value.instructions or "")
+
+
+async def test_get_document_other_401_keeps_generic_error(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _r: httpx.Response(401, json={"detail": "session expired"}))
+    client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as excinfo:
+        await cmssearch.get_document(client, source_key="cms-twiki", document_id="abc123")
+    assert "internal-credential" not in excinfo.value.message
+
+
 async def test_get_document_404(tmp_path: Path) -> None:
     recorder = Recorder(lambda _r: httpx.Response(404, json={"detail": "nf"}))
     client = make_client(tmp_path, recorder)

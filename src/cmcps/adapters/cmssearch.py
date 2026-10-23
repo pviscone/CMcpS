@@ -2,22 +2,27 @@
 
 Endpoint type: FastAPI with a public OpenAPI spec
 (``https://cms-search.web.cern.ch/openapi.json``, title "CERN Batch Docs
-Search"). Every route proxies through Keycloak, so browser cookies from the
-shared CERN SSO session are required; there is no anonymous surface.
+Search").
 
-Endpoints (verified live except the document route):
+Endpoints (all verified live 2026-10):
 - ``GET /search?q&size&from&sort&date_from&date_to&indices&rank`` — unified
   search across CMS/CERN IT doc sources; envelope ``{query, count, total,
   offset, limit, rank, results: [{document_id, score, index, base_key, tags,
   title, location, url, snippet, date}]}``. ``indices`` is a repeated query
   param. ``rank`` values are backend-defined (e.g.
-  ``relevance_pagerank_recent``) and passed through.
-- ``GET /api/documents/{source_key}/{document_id}?offset&limit`` — full
-  document content; response shape returned as-is (top-level mapping).
+  ``relevance_pagerank_recent``) and passed through. Served anonymously.
+- ``GET /api/documents/{source_key}/{document_id}?offset&limit`` — document
+  content; known limitation: the backend answers
+  ``401 {"detail": "Invalid internal service credential."}`` for ALL sources
+  and sessions (anonymous and fresh SSO alike), and the site's own SPA never
+  calls this route. It requires a server-internal credential that user SSO
+  does not carry; callers must open the hit's ``url`` with the matching
+  source tool instead. The error is surfaced explicitly by ``get_document``.
 - ``GET /api/docs-config`` — ``{docs: {<source_key>: {index_name, tags,
-  url}}}`` for the ~20-plus indexed sources.
+  url}}}`` for the ~20-plus indexed sources. Anonymous.
 - ``GET /api/index-stats`` — ``{stats: {<source_key>: {count,
   last_updated_at, last_updated_source, latest_document_date}}}``.
+  Anonymous.
 """
 
 from __future__ import annotations
@@ -35,6 +40,17 @@ BASE = "https://cms-search.web.cern.ch"
 
 _MAX_SIZE = 50
 _NOT_FOUND = 404
+_UNAUTHORIZED = 401
+# The documents route rejects every browser session (verified live 2026-10);
+# nothing a user SSO login carries satisfies it.
+_INTERNAL_CREDENTIAL_MARKER = b"invalid internal service credential"
+_INTERNAL_CREDENTIAL_INSTRUCTIONS = (
+    "The cms-search documents route requires a server-internal credential that SSO "
+    "sessions do not carry; it 401s for every source and session, and the site's own "
+    "frontend never calls it. Open the hit's url/location from cmssearch_search with "
+    "the matching source tool instead (twiki_get_page for cms-twiki/cms-public-twiki, "
+    "mkdocs_get_page, discourse_get_topic, ...)."
+)
 
 
 async def search(
@@ -121,6 +137,15 @@ async def get_document(
         raise UpstreamError(
             f"document {document_id!r} in source {source_key!r} not found",
             instructions="Get document ids and source keys from cmssearch_search results.",
+        )
+    if (
+        response.status_code == _UNAUTHORIZED
+        and _INTERNAL_CREDENTIAL_MARKER in response.content.lower()
+    ):
+        raise UpstreamError(
+            "cms-search rejected the document request with an internal-credential error",
+            status_code=response.status_code,
+            instructions=_INTERNAL_CREDENTIAL_INSTRUCTIONS,
         )
     payload = json_body(response, source=f"cmssearch document {document_id}")
     if not isinstance(payload, dict):

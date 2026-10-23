@@ -59,29 +59,32 @@ platform lands. Testing flags: default tests are fixture-only;
 
 ## TWiki (twiki.cern.ch)
 
-- **Endpoint type**: TWiki CGI scripts; HTML parsing of rendered pages and
-  raw wiki text through `?raw=on`.
-- **Auth**: anonymous `bin/view` works for public webs (verified on
-  `CMSPublic`); `bin/search`, `?raw=on`, and restricted webs redirect to
-  Keycloak OIDC (`auth.cern.ch`, client `twiki-production`) — served by the
-  SSO session. Auth-substituted HTML is detected and raised as a structured
-  upstream error with sign-in instructions.
+- **Endpoint type**: TWiki CGI scripts; HTML parsing of the print-cover
+  render (`cover=print`, low-noise).
+- **Auth**: anonymous `bin/view` renders pages for every web, restricted
+  ones included (verified 2026-10 on `CMS` and `CMS/Internal`). CERN TWiki
+  no longer serves the wiki source: `?raw=on` returns the rendered page
+  (200, HTML) for anonymous AND authenticated sessions, so the adapter
+  always consumes the render. Sign-in still visits `bin/viewauth` (silent
+  auth.cern.ch handshake drops the TWiki session cookie) so scripts that do
+  gate on login (protected attachment downloads) work through the SSO jar.
 - **Endpoints**:
-  - `GET /twiki/bin/search/<Web>/?search=...&type=keyword|literal|regex&limit=N`
-    — results rendered as `bin/view` links; extracted with anchor text,
-    deduplicated. Multiple webs in one search are passed as
-    `?web=Web1,Web2` (TWiki VarSEARCH comma-list; first web stays in the
-    URL path); tool default is `CMS,CMSPublic`.
-  - `GET /twiki/bin/view/<Web>/<Topic>?raw=on` — raw page; `%META:TOPICINFO`
-    (author/date/version), `%META:TOPICPARENT`, `%META:FILEATTACHMENT`
-    (name/size/comment) parsed; body = raw wiki text minus META lines.
-  - `GET /twiki/bin/view/<Web>/<Topic>` — rendered HTML → plain text.
+  - `GET /twiki/bin/view/<Web>/<Topic>?cover=print` — print-cover render;
+    body converted to plain text; footer metadata parsed:
+    `Topic revision: r<n> - YYYY-MM-DD - <user>` (version/date/author),
+    `This topic:` breadcrumb (immediate parent), and the marked
+    `twikiAttachments` section (attachment names/URLs).
   - `GET /twiki/bin/view/<Web>/WebTopicList` — topic index of the web;
     entries filtered to `[A-Za-z0-9]`-initial names.
   - `GET /twiki/pub/<Web>/<Topic>/<file>` — attachments; bounded download.
-- **Known limits**: search returns topic references only (no snippets);
-  private webs need SSO; legacy URL patterns preserved through the shared
-  base URL.
+- **Known limits**: page content is anonymous everywhere; only attachment
+  downloads in protected webs need the SSO TWiki session. The headline
+  metadata comes from the rendered footer, not `%META` records (raw source
+  is not served), so entries missing the footer report nulls. The TWiki CGI
+  full-text search
+  (`bin/search/<Web>/`) is not exposed — it is slow/flaky (frequent >30 s
+  reads) and returns no snippets; search TWiki content through cmssearch
+  indices `cms-twiki` and `cms-public-twiki` instead.
 
 ## CMS Online — OMS API (cmsoms.cern.ch)
 
@@ -248,8 +251,11 @@ platform lands. Testing flags: default tests are fixture-only;
     `indices` is a repeated parameter. `rank` values are backend-defined
     (default e.g. `relevance_pagerank_recent`) and passed through.
   - `GET /api/documents/{source_key}/{document_id}?offset&limit` — document
-    content; response shape not probed live, adapter passes any top-level
-    mapping through under `document` (structure-tolerant).
+    content. **Known backend limitation** (verified 2026-10): answers
+    `401 {"detail": "Invalid internal service credential."}` for every
+    source and session (anonymous and fresh SSO alike); the site's SPA never
+    calls this route. The adapter surfaces that case explicitly and directs
+    to the hit's source URL via the matching adapter tool.
   - `GET /api/docs-config` → `{docs:{<source_key>:{index_name,tags,url}}}`
     (~20 CMS/CERN IT sources).
   - `GET /api/index-stats` → `{stats:{<source_key>:{count,last_updated_at,

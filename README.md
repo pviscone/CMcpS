@@ -19,6 +19,7 @@ For full functionality two environment variables are needed alongside the SSO se
 
 - `CMCPS_INDICO_API_TOKEN` — an Indico personal API token (`indp_...`, from indico.cern.ch → your profile → API). Without it, protected Indico events/categories are invisible (they surface as "not found").
 - `CMCPS_GITLAB_TOKEN` — a GitLab personal access token with the `read_api` scope. Without it, internal/private GitLab projects, wikis, issues, and code search are inaccessible.
+- DAS tools require `dasgoclient`
 
 ```bash
 CMCPS_INDICO_API_TOKEN=indp_... CMCPS_GITLAB_TOKEN=glpat-... uv run cmcps
@@ -154,10 +155,9 @@ Static HTML pages of CMS publications and preliminary results (public; no auth).
 
 ## TWiki tools (twiki.cern.ch)
 
-CERN TWiki runs behind OIDC SSO for everything except anonymous `view` of public webs. `twiki_get_page raw=true` and `twiki_search` need a completed `cern_auth_sign_in`; `twiki_list_topics` and rendered pages work anonymously for public webs.
+CERN TWiki serves rendered `view` pages anonymously for every web (restricted ones included). It no longer serves the wiki source — `?raw=on` returns the rendered page — so `twiki_get_page` fetches the low-noise print cover (`cover=print`) and returns plain text; `raw=true` additionally parses the footer metadata (revision, author, date, parent topic, attachments). Sign-in visits the TWiki `viewauth` script so the TWiki session cookie is available for scripts that gate on login (protected attachment downloads). **TWiki full-text search is done with `cmssearch_search`** (indices `cms-twiki` for the private web and `cms-public-twiki` for the public web) — the TWiki CGI search is slow/flaky and returns no snippets, so there is no `twiki_search` tool. Webs are hierarchical: subwebs are addressed as `Web/Subweb` (e.g. `CMS/Internal`).
 
-- `twiki_search` — full-text search of one or more webs (`keyword`/`literal`/`regex`); defaults to `CMS,CMSPublic` in a single request (comma-separated `web` list, per TWiki VarSEARCH); returns topic references.
-- `twiki_get_page` — one page: raw wiki source + parsed metadata (author, revision, date, attachments) or anonymous rendered text (`raw=false`).
+- `twiki_get_page` — one page as plain text (print cover, stripped navigation); `raw=true` (default) adds footer metadata (revision, author, date, parent, attachments).
 - `twiki_list_topics` — topic list of a public web.
 - `twiki_download_attachment` — bounded download of a `/twiki/pub/...` attachment URL.
 
@@ -260,7 +260,7 @@ Credential resolution (first match wins):
 Unified documentation search over ~20 CMS/CERN IT documentation sources ("CERN Batch Docs Search"; public OpenAPI spec). Every route is Keycloak-proxied, so the shared SSO session is mandatory.
 
 - `cmssearch_search` — unified search (`query`, `size` ≤ 50, `offset`, `sort`, `rank`, `date_from`/`date_to`, repeated `indices` filter); returns title, URL, snippet, score, date, tags with total count.
-- `cmssearch_get_document` — full indexed document content by `source_key` + `document_id`, optional `offset`/`limit`.
+- `cmssearch_get_document` — full indexed document content by `source_key` + `document_id`, optional `offset`/`limit`. **Known backend limitation**: the documents route answers `401 'Invalid internal service credential'` for every source and session; fetch the hit's URL with the matching source tool instead.
 - `cmssearch_list_sources` — indexed sources (`source_key`, index name, tags, base URL).
 - `cmssearch_index_stats` — document counts and freshness per source, optional `source_key` filter.
 

@@ -54,7 +54,8 @@ def register_discourse_tools(
             "best-practice and discussion threads. It is NOT for published "
             "papers (inspire_search_papers), internal unpublished CMS analyses "
             "(glance_search_analyses), official CMS public results pages "
-            "(cmsresults_*), or wiki documentation (twiki_search/mkdocs_search). " + _SITE_DOC
+            "(cmsresults_*), or wiki documentation (cmssearch_search indices "
+            "'cms-twiki'/'cms-public-twiki', mkdocs_search). " + _SITE_DOC
         ),
     )
     async def discourse_search(

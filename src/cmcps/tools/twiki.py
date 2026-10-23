@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
@@ -24,58 +24,19 @@ def register_twiki_tools(
     """Register the read-only twiki.cern.ch tools."""
 
     @server.tool(
-        name="twiki_search",
-        description=(
-            "Full-text search of CERN TWiki webs, by default both CMS "
-            "(private collaboration web) and CMSPublic in one request — the "
-            "legacy CMS internal wiki for documentation pages not yet "
-            "migrated elsewhere. NOT for community Q&A (discourse_search), "
-            "CMS batch docs (cmssearch_search), or MkDocs sites "
-            "(mkdocs_search). search_type is keyword (default), literal, or "
-            "regex. Requires CERN SSO beyond anonymous view pages."
-        ),
-    )
-    async def twiki_search(
-        query: str,
-        search_type: Annotated[
-            Literal["keyword", "literal", "regex"],
-            Field(
-                description=(
-                    "keyword (default) requires all terms in any order; literal "
-                    "matches the string exactly; regex treats query as a TWiki "
-                    "regular expression"
-                )
-            ),
-        ] = "keyword",
-        limit: Annotated[int, Field(ge=1, le=200)] = 50,
-        web: Annotated[
-            str,
-            Field(
-                description=(
-                    "TWiki web(s) to search (case-sensitive). Defaults to "
-                    "'CMS,CMSPublic' — private CMS web plus public web, SSO "
-                    "required for the private web. Pass a single web (e.g. "
-                    "'CMSPublic' for public docs only) or a comma-separated "
-                    "list, e.g. 'CMS,Main'."
-                )
-            ),
-        ] = "CMS,CMSPublic",
-    ) -> ToolEnvelope:
-        """Twiki web search."""
-        return await guarded(
-            auth,
-            lambda: twiki.search(http, web=web, query=query, search_type=search_type, limit=limit),
-        )
-
-    @server.tool(
         name="twiki_get_page",
         description=(
             "Fetch one TWiki page by web/topic naming (e.g. web='CMSPublic', "
-            "topic='PhysicsResultsHIG'); follow twiki_search or "
-            "twiki_list_topics. raw=true (default) returns the wiki source "
-            "text with parsed metadata (author, revision, date, attachments) "
-            "and requires SSO; raw=false returns the anonymous rendered page "
-            "as plain text."
+            "topic='PhysicsResultsHIG'); webs are hierarchical, so subwebs "
+            "are 'Web/Subweb' (e.g. CMS/Internal). Locate pages with "
+            "cmssearch_search (indices 'cms-twiki' and 'cms-public-twiki') "
+            "or browse with twiki_list_topics. Pages are fetched with the "
+            "low-noise print cover (cover=print) and returned as plain text; "
+            "raw=true (default) additionally returns the footer metadata "
+            "(revision, author, date, parent topic, attachments). CERN TWiki "
+            "no longer serves the wiki source (?raw=on returns the rendered "
+            "page), so raw=true does NOT return raw markup. Works "
+            "anonymously for every web."
         ),
     )
     async def twiki_get_page(
@@ -83,8 +44,9 @@ def register_twiki_tools(
             str,
             Field(
                 description=(
-                    "TWiki web (case-sensitive) — take it from the twiki_search hit's "
-                    "web field (CMS = private, CMSPublic = public), e.g. CMSPublic, Main"
+                    "TWiki web (case-sensitive), with subwebs joined by '/' "
+                    "(e.g. CMSPublic, Main, CMS/Internal); derived from the "
+                    "cmssearch hit URL /twiki/bin/view/<Web>/<Topic>"
                 )
             ),
         ],
@@ -101,8 +63,8 @@ def register_twiki_tools(
         name="twiki_list_topics",
         description=(
             "List topics of one public TWiki web via its WebTopicList page "
-            "(anonymous for public webs) — browse a web before searching with "
-            "twiki_search."
+            "(anonymous for public webs) — browse a web before fetching pages "
+            "with twiki_get_page; for search use cmssearch_search."
         ),
     )
     async def twiki_list_topics(

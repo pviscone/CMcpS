@@ -29,10 +29,12 @@ def register_cmssearch_tools(
             "Unified full-text search over ~20 CMS/CERN indexed documentation "
             "sources (cms-search.web.cern.ch, SSO required) — batch "
             "documentation answers; returns title, URL, snippet, score, date, "
-            "tags. For a single MkDocs site use mkdocs_search; for legacy wiki "
-            "use twiki_search; for forums use discourse_search. Optional "
-            "sort/rank passthrough, date range, and repeated indices filter. "
-            "Offset pagination via offset+size."
+            "tags. For a single MkDocs site use mkdocs_search; for forums use "
+            "discourse_search. TWiki content MUST be searched here via "
+            "indices 'cms-twiki' (private web) and 'cms-public-twiki' (public "
+            "web) — there is no separate twiki_search tool; fetch pages with "
+            "twiki_get_page. Optional sort/rank passthrough, date range, and "
+            "repeated indices filter. Offset pagination via offset+size."
         ),
     )
     async def cmssearch_search(  # noqa: PLR0917
@@ -67,7 +69,11 @@ def register_cmssearch_tools(
             "Full content of one indexed CMS Search document by source_key "
             "and document_id (both from cmssearch_search results); follow "
             "cmssearch_search. Optional offset/limit page through long "
-            "content. SSO required."
+            "content. KNOWN LIMITATION: the backend answers 401 "
+            "'Invalid internal service credential' for every source and "
+            "session — fetch the hit's url with the matching source tool "
+            "instead (twiki_get_page, mkdocs_get_page, discourse_get_topic, "
+            "...)."
         ),
     )
     async def cmssearch_get_document(

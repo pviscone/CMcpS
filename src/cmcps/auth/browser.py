@@ -208,10 +208,28 @@ async def _advance_jira_sso(page: Page) -> None:
         logger.debug("Jira SSO advance failed", exc_info=True)
 
 
+async def _twiki_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds any twiki.cern.ch cookie (session established).
+
+    TWiki forces auth on the ``viewauth`` script; inside an SSO context the
+    auth.cern.ch handshake completes silently and drops a session cookie
+    (e.g. mod_auth_openidc/TWIKISID) needed for ``raw=on`` page source.
+    """
+    try:
+        cookies = await context.cookies("https://twiki.cern.ch")
+    except PlaywrightError:
+        return False
+    return bool(cookies)
+
+
+# The TWiki entry visits the viewauth script so the SSO handshake drops the
+# twiki.cern.ch session cookie used by scripts that gate on login (protected
+# attachment downloads); page content itself is served anonymously.
 _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], ...] = (
     ("https://cms-talk.web.cern.ch", None, None),
     ("https://cms-pub-talk.web.cern.ch", None, None),
     (JIRA_SITE_URL, _advance_jira_sso, _jira_session_ready),
+    ("https://twiki.cern.ch/twiki/bin/viewauth/CMS/WebHome", None, _twiki_session_ready),
 )
 
 _COOKIE_CAPTURE_TIMEOUT_MS = 30_000

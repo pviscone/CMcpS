@@ -143,7 +143,6 @@ CMSONLINE_TOOLS = {
     "cmsonline_get_shift_schedule",
 }
 TWIKI_TOOLS = {
-    "twiki_search",
     "twiki_get_page",
     "twiki_list_topics",
     "twiki_download_attachment",
@@ -234,7 +233,6 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "cmsresults_download_file": {
         "download_url": "https://cms-results.web.cern.ch/cms-results/public-results/publications/HIG-11-024/figures/a.png"
     },
-    "twiki_search": {"web": "CMSPublic", "query": "higgs"},
     "twiki_get_page": {"web": "CMSPublic", "topic": "WebHome"},
     "twiki_list_topics": {"web": "CMSPublic"},
     "twiki_download_attachment": {
@@ -317,11 +315,9 @@ async def test_server_exposes_m1_tools(settings: Settings) -> None:
     assert bounded["maximum"] == 900
 
 
-async def test_twiki_search_defaults_to_cms_web_pair(settings: Settings) -> None:
+async def test_twiki_fetch_tools_require_web(settings: Settings) -> None:
     server = build_server(settings)
     tools = await server.list_tools()
-    search = next(tool for tool in tools if tool.name == "twiki_search")
-    assert search.input_schema["properties"]["web"]["default"] == "CMS,CMSPublic"
     get_page = next(tool for tool in tools if tool.name == "twiki_get_page")
     assert "web" in get_page.input_schema["required"]
     list_topics = next(tool for tool in tools if tool.name == "twiki_list_topics")
