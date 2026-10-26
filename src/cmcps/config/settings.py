@@ -20,6 +20,8 @@ DEFAULT_ALLOWED_HOSTS = (
     # Public certificate-transparency database queried by the websites adapter
     # (GET-only, no credentials sent).
     "crt.sh",
+    # CERN IT Service-Now portal (service-portal search API + KB JSONv2 reads).
+    "cern.service-now.com",
 )
 DEFAULT_SSO_START_URL = "https://indico.cern.ch/user/dashboard/"
 DEFAULT_SSO_IDENTITY_HOST = "auth.cern.ch"

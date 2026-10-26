@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -212,3 +213,32 @@ async def test_download_rejects_destination_outside_managed_dir(tmp_path: Path) 
     assert requests == []
     assert str(settings.download_dir) not in (exc_info.value.instructions or "")
     assert not (tmp_path / "outside.bin").exists()
+
+
+async def test_request_json_post_sends_json_body(settings: Settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["content-type"].startswith("application/json")
+        assert json.loads(request.content) == {"query": "certificate", "count": 10}
+        return httpx.Response(201, json={"result": {"results": []}})
+
+    client, requests = _client_with_transport(handler, settings)
+    response = await client.request_json_post(
+        "https://cern.service-now.com/api/now/sp/search",
+        json_body={"query": "certificate", "count": 10},
+        allowlist=("cern.service-now.com",),
+        authenticated=False,
+    )
+    assert response.status_code == 201
+    assert len(requests) == 1
+
+
+async def test_request_json_post_rejects_unallowlisted_host(settings: Settings) -> None:
+    client, requests = _client_with_transport(lambda _r: httpx.Response(200), settings)
+    with pytest.raises(PolicyViolationError):
+        await client.request_json_post(
+            "https://evil.cern.ch/anything",
+            json_body={"x": 1},
+            allowlist=("cern.service-now.com",),
+            authenticated=False,
+        )
+    assert requests == []

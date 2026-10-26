@@ -28,6 +28,7 @@ from cmcps.tools.jira import register_jira_tools
 from cmcps.tools.mcm import register_mcm_tools
 from cmcps.tools.mkdocs import register_mkdocs_tools
 from cmcps.tools.pdftools import register_pdftools_tools
+from cmcps.tools.servicenow import register_servicenow_tools
 from cmcps.tools.twiki import register_twiki_tools
 from cmcps.tools.websites import register_websites_tools
 from cmcps.tools.xsdb import register_xsdb_tools
@@ -64,3 +65,4 @@ def register_adapter_tools(
     register_hypernews_tools(server, settings, auth, http)
     register_pdftools_tools(server, settings, auth, http)
     register_websites_tools(server, settings, auth, http)
+    register_servicenow_tools(server, settings, auth, http)

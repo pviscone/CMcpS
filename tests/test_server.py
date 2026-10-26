@@ -185,6 +185,11 @@ WEBSITES_TOOLS = {
     "websites_refresh",
     "websites_status",
 }
+SERVICENOW_TOOLS = {
+    "servicenow_search_service_portal",
+    "servicenow_search_kb",
+    "servicenow_get_kb_article",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -211,6 +216,7 @@ ALL_TOOLS = (
     | EGUIDE_TOOLS
     | HYPERNEWS_TOOLS
     | WEBSITES_TOOLS
+    | SERVICENOW_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
@@ -334,6 +340,9 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     },
     "xsdb_search": {"particles": "ttbar"},
     "xsdb_list_tables": {},
+    "servicenow_search_service_portal": {"query": "certificate"},
+    "servicenow_search_kb": {"query": "certificate"},
+    "servicenow_get_kb_article": {"reference": "KB0000705"},
     "hltinfo_list_menus": {},
     "hltinfo_get_path_summary": {},
     "hltinfo_get_path_names": {},

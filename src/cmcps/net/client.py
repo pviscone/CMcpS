@@ -222,6 +222,51 @@ class SafeHttpClient:
             )
         return final
 
+    async def _post(
+        self,
+        url: str,
+        *,
+        form: Mapping[str, str | int | float | bool] | None,
+        json_body: Mapping[str, Any] | None,
+        allowlist: tuple[str, ...],
+        headers: dict[str, str] | None,
+        authenticated: bool,
+    ) -> SafeResponse:
+        """Shared POST core behind the explicit read-only allowlist gates."""
+        target = validate_url(url, allowed_hosts=self.settings.allowed_hosts)
+        host = urlsplit(target).hostname
+        if host is None or not any(
+            host == allowed or host.endswith(f".{allowed}") for allowed in allowlist
+        ):
+            raise PolicyViolationError(f"POST is restricted to {list(allowlist)}, got {host}")
+        for redirects_seen in range(self.settings.max_redirects + 1):
+            request_headers: dict[str, str] = dict(validate_headers(headers))
+            if cookie := await self._cookie_for(target, authenticated=authenticated):
+                request_headers["Cookie"] = cookie
+            try:
+                async with self._client.stream(
+                    "POST",
+                    target,
+                    data=form if redirects_seen == 0 else None,
+                    json=json_body if redirects_seen == 0 else None,
+                    headers=request_headers or None,
+                    timeout=self.settings.request_timeout_seconds,
+                    follow_redirects=False,
+                ) as response:
+                    content = await self._read_content(response, method="POST")
+                    if redirect := self._next_redirect(response, redirects_seen):
+                        target = redirect
+                        continue
+                    return SafeResponse(
+                        status_code=response.status_code,
+                        url=redact_url(str(response.url)),
+                        headers=self._safe_headers(response),
+                        content=content,
+                    )
+            except httpx.HTTPError as exc:
+                raise PolicyViolationError(f"Request failed for {redact_url(url)}") from exc
+        raise PolicyViolationError(f"Request failed for {redact_url(url)}")
+
     async def request_form_post(
         self,
         url: str,
@@ -241,40 +286,44 @@ class SafeHttpClient:
         safety layer guarantees for GET applies: URL validation, cookie
         re-scoping on redirects, size limits.
         """
-        target = validate_url(url, allowed_hosts=self.settings.allowed_hosts)
-        host = urlsplit(target).hostname
-        if host is None or not any(
-            host == allowed or host.endswith(f".{allowed}") for allowed in allowlist
-        ):
-            raise PolicyViolationError(f"Form POST is restricted to {list(allowlist)}, got {host}")
-        for redirects_seen in range(self.settings.max_redirects + 1):
-            request_headers: dict[str, str] = dict(validate_headers(headers))
-            if cookie := await self._cookie_for(target, authenticated=authenticated):
-                request_headers["Cookie"] = cookie
-            try:
-                async with self._client.stream(
-                    "POST",
-                    target,
-                    data=data if redirects_seen == 0 else None,
-                    headers=request_headers or None,
-                    timeout=self.settings.request_timeout_seconds,
-                    follow_redirects=False,
-                ) as response:
-                    content = await self._read_content(response, method="POST")
-                    if redirect := self._next_redirect(response, redirects_seen):
-                        target = redirect
-                        continue
-                    return SafeResponse(
-                        status_code=response.status_code,
-                        url=redact_url(str(response.url)),
-                        headers=self._safe_headers(response),
-                        content=content,
-                    )
-            except httpx.HTTPError as exc:
-                if redirects_seen >= self.settings.max_redirects:
-                    raise PolicyViolationError(f"Request failed for {redact_url(url)}") from exc
-                raise PolicyViolationError(f"Request failed for {redact_url(url)}") from exc
-        raise PolicyViolationError(f"Request failed for {redact_url(url)}")
+        return await self._post(
+            url,
+            form=data,
+            json_body=None,
+            allowlist=allowlist,
+            headers=headers,
+            authenticated=authenticated,
+        )
+
+    async def request_json_post(
+        self,
+        url: str,
+        *,
+        json_body: Mapping[str, Any],
+        allowlist: tuple[str, ...],
+        headers: dict[str, str] | None = None,
+        authenticated: bool = True,
+    ) -> SafeResponse:
+        """POST one JSON body to an allowlisted read-only query endpoint.
+
+        Some CERN services only expose their search backend as a JSON POST
+        (the CERN Service-Now Service-Portal ``/api/now/sp/search`` has no GET
+        equivalent, verified: GET answers 405). Semantics stay read-only: the
+        call issues a query and never mutates state, like the CMS Online form
+        POST and the auth-layer OIDC token-refresh POST. Restrictions: HTTPS +
+        explicit endpoint allowlist + one small JSON object body (no form
+        data, no file upload, no streaming). Everything else the safety layer
+        guarantees for GET applies: URL validation, cookie re-scoping on
+        redirects, size limits.
+        """
+        return await self._post(
+            url,
+            form=None,
+            json_body=json_body,
+            allowlist=allowlist,
+            headers=headers,
+            authenticated=authenticated,
+        )
 
     async def download(
         self,

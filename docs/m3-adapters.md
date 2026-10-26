@@ -507,3 +507,62 @@ Authenticated discovery (browser network inspection) found the mechanism:
   surface the paths, pages parse as Drupal nodes), contact pages, the
   `/en/forms` listing, non-procedure content pages (`/en/content/...`),
   and the cernoverride theme's leaked PHP warning banner (ignored noise).
+
+## CERN Service Portal / ServiceNow (cern.service-now.com) — delivered
+
+- **Discovery date**: 2026-10-26 (authenticated probes against the live
+  instance plus authenticated browser traffic capture of the SPA's own XHRs).
+- **Platform**: ServiceNow Service Portal 1.x (Angular `sp-ng-app` shell
+  composed via `/api/now/sp/page`, classic-era KB store). The instance is the
+  CERN IT services portal ("CERN Service Portal", portal id
+  `af91927edb821740ab34731b8c961927`).
+- **Auth**: anonymous requests never authenticate — the SPA shell is served
+  to everyone (200) without any SSO redirect, and the portal's own APIs then
+  see a guest. A headless browser drive of the protected classic page
+  `/service-portal/kb_search.do` triggers `saml_redirector.do` → silent CERN
+  SAML handshake and drops the ServiceNow session cookies (`JSESSIONID`,
+  `glide_session_store`, `glide_sso_id`, ...). Registered in
+  `auth/browser.py:_COOKIE_ONLY_SITES`; the adapter probes the session before
+  searching and re-warms once on 401/403 (JSONv2). `/api/now/v1/table/*` is
+  role-gated: 401 "User is not authenticated" **even with a valid web
+  session** — do not use.
+- **Surfaces**:
+  - `POST /api/now/sp/search` — the portal's own full-text search backend
+    (captured from authenticated browser traffic; GET answers 405). Replayed
+    with plain session cookies: 201 + JSON. Body: `{"query", "query_start_location",
+    "count", "portal", "page", "include_facets", "include_suggestions"[, "source"]}`.
+    Sources observed: `kb` (Knowledge articles), `actions` + `items`
+    (service-catalog entries), `service_elements`, `outages`,
+    `external_actions`, `information`. Result rows: `sys_id`, `number`/`name`,
+    `label`, `short_description`, `text` snippet, `score`, `publishedUTC`,
+    portal-relative `link`/`url` (absolutized by the adapter). Routed through
+    `SafeHttpClient.request_json_post` (allowlisted to
+    `cern.service-now.com`), the same read-only-POST precedent as the CMS
+    Online form-POST.
+  - **Limits (verified)**: no pagination and no totals —
+    `pagination_supported=false`, `total_number_results=0` in every response;
+    results capped at ~30/call across `result.results` +
+    `result.additionalResults`. **Anonymous POST returns 201 with empty
+    `results`** (silent guest search) — hence the pre-flight session probe
+    via JSONv2.
+  - `GET /kb_knowledge.do?JSONv2&sysparm_query=<key>=<value>` — legacy JSONv2
+    read API; works with the portal session for KB articles and
+    `kb_category` (label + `full_category` path). Anonymous → 401 (used as
+    the session probe). **Limits (verified)**: `sysparm_fields` /
+    `sysparm_limit` are ignored — a query returns every field of up to 50
+    records (a text-index query inflated one response to 19.8 MB), so only
+    exact-key lookups (`number=`/`sys_id=`) are size-safe. Canonical article
+    portal URL comes from the record's `u_portal_page` (fallback
+    `?id=kb_article&n=<number>`).
+- **Tools** (3): `servicenow_search_service_portal`,
+  `servicenow_search_kb` (portal search pinned to `sources=["kb"]`),
+  `servicenow_get_kb_article` (number or sys_id; category resolved via a
+  second JSONv2 lookup; body HTML stripped to plain text, 20k cap).
+- **Not implemented**: service-catalog item detail (`sc_cat_item` JSONv2
+  blanket read is accessible — verified — but search already links items and
+  the requested surface was search + KB), portal facets
+  (`include_facets=true` payload carries widget-level facet lists, no
+  per-source totals), the `/api/now/ui/presence`-family noise endpoints the
+  SPA posts to, and any user-account/`sys_user` surface (ACL-uncertain, no
+  read-only value for the ask).
+

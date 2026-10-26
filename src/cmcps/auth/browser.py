@@ -166,6 +166,14 @@ async def _capture_bearer_services(
 JIRA_SITE_URL = "https://its.cern.ch/jira/login.jsp?os_destination=%2Fsecure%2FDashboard.jspa"
 _JIRA_COOKIE_URL = "https://its.cern.ch/jira/"
 
+# cern.service-now.com: a protected classic page (kb_search.do) redirects
+# through saml_redirector.do into the silent CERN SAML handshake, dropping the
+# ServiceNow session cookies (JSESSIONID, glide_session_store) that back the
+# Service-Portal search API and the legacy JSONv2 read endpoints. Keep in sync
+# with `cmcps.adapters.servicenow.SESSION_WARM_URLS`.
+SERVICENOW_SITE_URL = "https://cern.service-now.com/service-portal/kb_search.do"
+_SERVICENOW_COOKIE_URL = "https://cern.service-now.com"
+
 SiteReadiness = Callable[[BrowserContext], Awaitable[bool]]
 SiteAdvance = Callable[[Page], Awaitable[None]]
 
@@ -251,6 +259,20 @@ async def _cms_alcm_session_ready(context: BrowserContext) -> bool:
     return any(cookie.get("name") == "mod_auth_openidc_session" for cookie in cookies)
 
 
+async def _servicenow_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds a cern.service-now.com session.
+
+    Verified cookie names from the live SAML handshake: ``JSESSIONID`` plus
+    the ``glide_session_store`` family.
+    """
+    try:
+        cookies = await context.cookies(_SERVICENOW_COOKIE_URL)
+    except PlaywrightError:
+        return False
+    names = {cookie.get("name") for cookie in cookies}
+    return bool(names & {"JSESSIONID", "glide_session_store"})
+
+
 # The TWiki entry visits the viewauth script so the SSO handshake drops the
 # twiki.cern.ch session cookie used by scripts that gate on login (protected
 # attachment downloads); page content itself is served anonymously.
@@ -264,6 +286,7 @@ _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], 
     ("https://twiki.cern.ch/twiki/bin/viewauth/CMS/WebHome", None, _twiki_session_ready),
     ("https://cds.cern.ch/youraccount/login?ln=en", None, _cds_session_ready),
     ("https://cms-alcm.web.cern.ch/", None, _cms_alcm_session_ready),
+    (SERVICENOW_SITE_URL, None, _servicenow_session_ready),
 )
 
 _COOKIE_CAPTURE_TIMEOUT_MS = 30_000

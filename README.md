@@ -345,6 +345,14 @@ Credential model: the portal API wants a Bearer token, but its SPA obtains it vi
 - `websites_refresh` — forced refetch of both sources and atomic cache rebuild; reports per-source and per-environment counts (a crt.sh outage degrades to a wsp-only rebuild with a note).
 - `websites_status` — cache metadata only (fetched-at, age vs TTL, per-source counts, FTS availability); never fetches.
 
+## CERN Service Portal tools (cern.service-now.com)
+
+Service-Portal search and Knowledge-Base article retrieval for the CERN IT services portal. Auth: anonymous requests never establish a ServiceNow session (the SPA shell is served to everyone); a headless browser drive through CERN SAML (`kb_search.do` → `saml_redirector.do`) drops the `JSESSIONID`/`glide_session_store` session cookies — planted by `cern_auth_sign_in` and re-driven automatically when expired (the search path probes the session first, mirroring the Jira adapter). The Table REST API (`/api/now/v1/table/*`) requires a dedicated REST role and answers 401 even in-session, so article reads use the legacy `*.do?JSONv2` GET endpoint. The actual portal full-text search is `POST /api/now/sp/search` only (GET answers 405) — read-only query semantics, routed through `SafeHttpClient.request_json_post`, which is allowlisted to this host only (same precedent as the CMS Online form-POST sink).
+
+- `servicenow_search_service_portal` — relevance-ranked full-text search across KB articles, service-catalog items/actions, service elements, outages, external actions and information pages; `sources` restricts to a subset of the backend source ids (`kb`, `actions`, `items`, `service_elements`, `outages`, `external_actions`, `information`), `limit` 1–30. Items carry `sys_id`/`number`, label, snippet, score, published date and an absolute portal URL. The backend offers no paging or result totals (verified: `pagination_supported=false`); narrow the query instead.
+- `servicenow_search_kb` — the same search restricted to the Knowledge Base (`sources=["kb"]`).
+- `servicenow_get_kb_article` — full KB article by number (`KB0000705`) or 32-hex `sys_id` from search results: title, summary, keywords, category label + full path (resolved via `kb_category`), published/updated dates, helpful count, portal URL, and the body as plain text (HTML stripped, 20k character cap). Records are fetched via exact-key JSONv2 lookup; JSONv2 ignores `sysparm_fields`/`sysparm_limit`, so keyed lookups are the only size-safe pattern there.
+
 ## Configuration
 
 Configuration uses environment variables with the `CMCPS_` prefix. Common settings:
