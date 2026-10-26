@@ -472,3 +472,60 @@ async def render_page_html(
     finally:
         await _close_resource(context, "context")
         await _close_resource(browser, "browser")
+
+
+_EXTRACT_TIMEOUT_SECONDS = 60
+
+
+async def extract_local_storage_value(
+    settings: Settings,
+    storage_state: dict[str, Any],
+    url: str,
+    storage_key: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Open ``url`` headlessly through the stored SSO session and read one
+    ``window.localStorage`` key once the page's own auth flow settles.
+
+    Used for SPAs whose API token is minted by the app backend into browser
+    storage (not visible as a Keycloak token exchange, so the BEARER_SERVICES
+    interception cannot capture it). Returns ``(value, refreshed_storage_state)``
+    or ``None`` when the key never materializes. The value is a secret and must
+    stay inside trusted adapter code.
+    """
+    deadline = asyncio.get_running_loop().time() + _EXTRACT_TIMEOUT_SECONDS
+    browser: Browser | None = None
+    context: BrowserContext | None = None
+    probe = (
+        "(key) => window.localStorage.getItem(key)"
+    )
+    try:
+        async with async_playwright() as playwright:
+            browser = await _launch_browser(settings, playwright, headless=True)
+            context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
+            page = await context.new_page()
+            try:
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=min(30_000, _EXTRACT_TIMEOUT_SECONDS * 1000),
+                )
+            except PlaywrightError:
+                logger.debug("Local-storage extraction page load failed for %s", url)
+                return None
+            value: str | None = None
+            while not page.is_closed():
+                try:
+                    value = await page.evaluate(probe, storage_key)
+                except PlaywrightError:
+                    value = None
+                if isinstance(value, str) and value:
+                    return value, await context.storage_state()
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    logger.debug("Local-storage key %r never materialized for %s", storage_key, url)
+                    return None
+                await asyncio.sleep(min(settings.sso_poll_seconds, remaining))
+            return None
+    finally:
+        await _close_resource(context, "local-storage context")
+        await _close_resource(browser, "local-storage browser")

@@ -332,6 +332,19 @@ Local post-processing for PDFs fetched with the `*_download_*` tools (or any loc
 - `pdf_crop_figure` — crops one page region into a new single-page PDF via `show_pdf_page`, so drawings stay vector and text stays selectable (no rasterization). Optional plain `output_name`.
 - `pdf_render_page` — rasterizes a page or a clipped region to PNG for visual verification (`dpi` 1–600, default 150; re-render higher for pale figures before concluding they are empty).
 
+## CERN website inventory tools (webservices-portal.web.cern.ch + crt.sh)
+
+Searchable local inventory of CERN hosted websites. The primary source is the Web Services portal inventory (`GET /api/search/hostnames`), which enumerates every centrally hosted site (webeos, paas, appCatalogue, drupal, wsdb) with owner, category, display type, description and creation timestamp; it is merged with `*.cern.ch` hostnames from the public crt.sh certificate-transparency logs, which additionally cover self-managed hosts with publicly trusted certificates (no metadata for those rows — `source` field is `wsp` or `ctlog`). LANDB and the portal expose no global device/DNS export to regular accounts, which is why the website inventory comes from these two sources.
+
+The merged inventory (~14.5k sites, ~4 MB) is cached as a SQLite database (`websites-inventory.db`) under the CMcpS state directory, rebuilt atomically on each refresh. `websites_search` and `websites_lookup` auto-refresh when the cache is absent or older than `CMCPS_WEBSITES_CACHE_MAX_AGE_DAYS` (default 30); a refresh failure with an existing cache serves stale results with a `stale_served` note. Search is FTS5 prefix-matching ranked across hostname, project name, description and owner (tokens ANDed), with a substring fallback when SQLite was built without FTS5.
+
+Credential model: the portal API wants a Bearer token, but its SPA obtains it via a backend `/authenticate` route — no Keycloak token exchange is visible in the browser, so the `BEARER_SERVICES` interception cannot capture it. Instead each refresh mints the token on demand: a headless browser visit to the portal login page driven by the stored SSO session reads `window.localStorage["token"]` (`AuthService.extract_local_storage`, analogous to `render_page`). The token is held in memory only, never persisted. Manual fallback: `CMCPS_WEBSITES_TOKEN`. Requires a working `cern_auth_sign_in` session for the headless mint. crt.sh is queried anonymously (it is in `CMCPS_ALLOWED_HOSTS` by default; it receives no credentials).
+
+- `websites_search` — ranked full-text search with structured filters (`environment`, `category`, `display_type`, `owner` — all exact, lowercase-insensitive) and `limit`/`offset` paging; empty query lists filtered rows.
+- `websites_lookup` — exact record(s) for one hostname (`indico.cern.ch`).
+- `websites_refresh` — forced refetch of both sources and atomic cache rebuild; reports per-source and per-environment counts (a crt.sh outage degrades to a wsp-only rebuild with a note).
+- `websites_status` — cache metadata only (fetched-at, age vs TTL, per-source counts, FTS availability); never fetches.
+
 ## Configuration
 
 Configuration uses environment variables with the `CMCPS_` prefix. Common settings:
@@ -356,6 +369,8 @@ Configuration uses environment variables with the `CMCPS_` prefix. Common settin
 | `CMCPS_GITLAB_BASE_URL` | `https://gitlab.cern.ch` | CERN GitLab instance |
 | `CMCPS_GITLAB_TOKEN` | unset | Optional GitLab personal access token (`read_api` scope) |
 | `CMCPS_CDS_BASE_URL` | `https://cds.cern.ch` | CDS instance |
+| `CMCPS_WEBSITES_TOKEN` | unset | Optional Web Services portal Bearer token (normally minted headlessly from SSO) |
+| `CMCPS_WEBSITES_CACHE_MAX_AGE_DAYS` | `30` | Inventory cache age after which searches auto-refresh |
 
 Service tokens come only from these namespaced environment variables and are injected by the trusted HTTP layer; they are never accepted as tool arguments, mixed into unrelated origins, or written to logs.
 

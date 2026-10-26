@@ -179,6 +179,12 @@ HYPERNEWS_TOOLS = {
     "hypernews_get_member",
     "hypernews_download_file",
 }
+WEBSITES_TOOLS = {
+    "websites_search",
+    "websites_lookup",
+    "websites_refresh",
+    "websites_status",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -204,6 +210,7 @@ ALL_TOOLS = (
     | PDFTOOLS_TOOLS
     | EGUIDE_TOOLS
     | HYPERNEWS_TOOLS
+    | WEBSITES_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
@@ -276,6 +283,10 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "gocms_list_links": {},
     "gocms_get_link": {"link_id": 1},
     "gocms_list_tags": {},
+    "websites_search": {"query": "atlas"},
+    "websites_lookup": {"hostname": "atlas.cern.ch"},
+    "websites_refresh": {},
+    "websites_status": {},
     "cmssdt_list_releases": {},
     "cmssdt_list_ib_queues": {},
     "cmssdt_ib_summary": {},

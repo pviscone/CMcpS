@@ -72,6 +72,8 @@ def build_server(
             "das_* = dataset/block/file locations (DBS). "
             "mcm_* = Monte-Carlo production requests (PdmV prepids). "
             "xsdb_* = cross-section records. "
+            "websites_* = searchable inventory of centrally hosted CERN websites "
+            "(Web Services portal + crt.sh; hostname/description/owner search). "
             "For a CMS publication's lifecycle use glance_* (internal analysis) -> "
             "cms-pub-talk (publication-review discussion) -> cmsresults_* (approved public "
             "page); for the published paper record itself use inspire_*."

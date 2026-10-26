@@ -17,6 +17,9 @@ DEFAULT_ALLOWED_HOSTS = (
     "*.cern.ch",
     "inspirehep.net",
     "*.inspirehep.net",
+    # Public certificate-transparency database queried by the websites adapter
+    # (GET-only, no credentials sent).
+    "crt.sh",
 )
 DEFAULT_SSO_START_URL = "https://indico.cern.ch/user/dashboard/"
 DEFAULT_SSO_IDENTITY_HOST = "auth.cern.ch"
@@ -101,6 +104,17 @@ class Settings(BaseSettings):
     glance_membership_app_url: str = "https://cmsfence.cern.ch/membership"
     glance_alcm_token: str | None = None
     glance_membership_token: str | None = None
+    # M4: CERN website inventory (webservices-portal.web.cern.ch). The portal's
+    # SPA authenticates through a backend /authenticate route (no Keycloak
+    # token POST in the browser), so the Bearer token is minted on demand by a
+    # headless SSO visit that reads window.localStorage["token"]
+    # (settings.websites_portal_app_url); CMCPS_WEBSITES_TOKEN overrides. The
+    # second source, crt.sh certificate-transparency logs, is public.
+    websites_portal_base_url: str = "https://webservices-portal.web.cern.ch"
+    websites_portal_app_url: str = "https://webservices-portal.web.cern.ch/login"
+    websites_token: str | None = None
+    websites_ctlog_url: str = "https://crt.sh/"
+    websites_cache_max_age_days: int = Field(default=30, ge=1, le=365)
     # DAS: serviced by the dasgoclient CLI (GSI client-certificate auth), not
     # by the SSO-cookie HTTP client. cert/key default to ~/.globus.
     dasgoclient_path: str | None = Field(default_factory=_default_dasgoclient)
@@ -116,6 +130,11 @@ class Settings(BaseSettings):
     def service_tokens_path(self) -> Path:
         """Path to the captured Keycloak Bearer-token store."""
         return self.state_dir / "cern-service-tokens.json"
+
+    @property
+    def websites_cache_path(self) -> Path:
+        """SQLite cache of the website inventory (FTS index + metadata)."""
+        return self.state_dir / "websites-inventory.db"
 
     @property
     def download_dir(self) -> Path:

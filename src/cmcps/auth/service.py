@@ -12,6 +12,7 @@ from typing import Any
 from cmcps.auth.browser import (
     PortalInteract,
     collect_sso_state,
+    extract_local_storage_value,
     render_page_html,
     warm_cookie_sites,
 )
@@ -50,6 +51,10 @@ PageRenderer = Callable[
 SiteWarmer = Callable[
     [Settings, dict[str, Any], Sequence[str]],
     Awaitable["dict[str, Any] | None"],
+]
+LocalStorageExtractor = Callable[
+    [Settings, dict[str, Any], str, str],
+    Awaitable["tuple[str, dict[str, Any]] | None"],
 ]
 
 SIGN_IN_FIRST = "Call cern_auth_sign_in and complete the CERN browser login."
@@ -95,12 +100,14 @@ class AuthService:
         collector: StorageStateCollector = collect_sso_state,
         page_renderer: PageRenderer = render_page_html,
         site_warmer: SiteWarmer = warm_cookie_sites,
+        storage_extractor: LocalStorageExtractor = extract_local_storage_value,
     ) -> None:
         self.settings = settings
         self.store = store or SessionStore(settings.session_path)
         self.collector = collector
         self.page_renderer = page_renderer
         self.site_warmer = site_warmer
+        self.storage_extractor = storage_extractor
 
     @property
     def identity_host(self) -> str:
@@ -297,6 +304,32 @@ class AuthService:
         minimized = minimize_storage_state(refreshed_state, self.settings.allowed_hosts)
         self.store.save(minimized)
         return html
+
+    async def extract_local_storage(self, url: str, storage_key: str) -> str | None:
+        """Read one ``window.localStorage`` key after driving ``url`` through SSO.
+
+        For SPAs whose API token is minted into browser storage by the app
+        backend (not capturable as a Keycloak token exchange, e.g.
+        webservices-portal). The returned value is secret and stays inside
+        trusted adapter code. ``None`` when SSO is bypassed, the session is
+        missing/expired, or the key never appeared.
+        """
+        record = self._authenticated_record(url)
+        if record is None:
+            return None
+        try:
+            extracted = await self.storage_extractor(
+                self.settings, record.storage_state, url, storage_key
+            )
+        except BrowserUnavailableError:
+            logger.debug("Local-storage extraction skipped; no browser for %s", url)
+            return None
+        if not extracted:
+            return None
+        value, refreshed_state = extracted
+        minimized = minimize_storage_state(refreshed_state, self.settings.allowed_hosts)
+        self.store.save(minimized)
+        return value
 
     def _authenticated_record(self, url: str) -> SessionRecord | None:
         """Return the stored session when SSO is active, the URL allowlisted, and identity fresh."""

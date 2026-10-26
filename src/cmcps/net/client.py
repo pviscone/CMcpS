@@ -95,6 +95,16 @@ class SafeHttpClient:
             return None
         return await self.auth_service.render_page(url, interact=interact)
 
+    async def browser_local_storage(self, url: str, storage_key: str) -> str | None:
+        """Read one localStorage key from a page driven through SSO headlessly.
+
+        For app-backend-minted tokens (e.g. the websites portal SPA). Returns
+        ``None`` when no auth service, no session, or the key never appeared.
+        """
+        if self.auth_service is None:
+            return None
+        return await self.auth_service.extract_local_storage(url, storage_key)
+
     def _next_redirect(
         self,
         response: httpx.Response,
