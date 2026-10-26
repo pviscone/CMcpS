@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import ssl
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -45,7 +46,12 @@ class SafeHttpClient:
         self.settings = settings
         self.auth_service = auth_service
         self._owned_client = client is None
-        self._client = client or httpx.AsyncClient(follow_redirects=False, trust_env=False)
+        # System CA store (not certifi): some CERN hosts, e.g. cms-docdb.cern.ch,
+        # serve host certificates issued by the CERN Grid Certification
+        # Authority, which is absent from the bundled certifi roots.
+        self._client = client or httpx.AsyncClient(
+            follow_redirects=False, trust_env=False, verify=ssl.create_default_context()
+        )
 
     async def __aenter__(self) -> SafeHttpClient:
         return self

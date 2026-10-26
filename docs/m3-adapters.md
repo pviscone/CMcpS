@@ -365,3 +365,51 @@ Authenticated discovery (browser network inspection) found the mechanism:
   `cmssdt_list_ib_queues`, `cmssdt_ib_summary`, `cmssdt_get_ib_details`,
   `cmssdt_list_cmssw_labels`, `cmssdt_list_open_prs`, `cmssdt_relval_archs`,
   `cmssdt_build_log_url` (pure derivation, no network).
+
+## CMS DocDB (cms-docdb.cern.ch) — delivered
+
+- **Discovery date**: 2026-10-26 (authenticated probes against the live site).
+- **Surface**: modified Perl-CGI DocDB 8.9.0, HTML only; no JSON API.
+- **TLS**: cms-docdb serves a **CERN Grid Certification Authority** host
+  certificate, which is absent from the certifi root bundle that httpx uses
+  by default. `SafeHttpClient` now builds its default client with the
+  system CA store (`ssl.create_default_context()`); without this every
+  request dies with `[SSL: CERTIFICATE_VERIFY_FAILED]`.
+- **Auth**: every page requires the CERN SSO session (anonymous → 302 to
+  Keycloak). The shared cookie session suffices.
+- **Endpoints** (all verified live):
+  - `GET /cgi-bin/DocDB/ShowDocument?docid=N[&version=M]` — full metadata
+    page: `<title>CMS-doc-N-vM: …</title>`, `#DocTitle h1`, `#BasicDocInfo`
+    `<dl>` (Document #, type, submitter/updater, created/contents-revised/
+    metadata-revised), `#Viewable`/`#Modifiable` groups, `#OtherVersions`
+    history table, `#Abstract`, `#Files` (RetrieveFile links, description,
+    size), `#Topics` hierarchical anchor paths, `#Authors`, `#Keywords`.
+    A missing or non-visible document returns HTTP 200 with title
+    "Not authorized" and no `#RevisionInfo` block — mapped to a
+    non-retryable not-found error.
+  - `GET /cgi-bin/DocDB/Search?simpletext=Q&simple=1` — full-text search
+    (DocDB "simple search": title/abstract/keywords/authors/publication
+    info; plain docid also matches). `titlesearch=…&titlesearchmode=allword&
+    mode=title` restricts to the title. Update-date filters require the
+    full `afterday`/`aftermonth`(3-letter)/`afteryear` triple (and the
+    `before` counterpart); a bare year is silently ignored (0 hits).
+    Results render as the `#DocumentTable` HTML table (docid, title anchor,
+    first author + "et al.", topics, date) plus "Number of documents
+    found: N"; offset/limit slicing is client-side. The plural-input POST
+    form (`action=Search`, multipart) is blocked by the Keycloak fronted
+    proxy ("Invalid Request"), so GET is the only usable search path.
+    `XSearch` queries *other* DocDB installations and shows only public
+    documents of those — useless here.
+  - `GET /cgi-bin/DocDB/ListBy?days=N` — "see recent" table (same row
+    shape). `ListBy?alldocs=1` exceeds `CMCPS_MAX_RESPONSE_BYTES` (10 MB)
+    on the live corpus and is intentionally not exposed. `ListAuthors`
+    (~620 KB) and `ListTopics`/`DocumentDatabase` (~160 KB) exist but add
+    no search value over `docdb_search`; not implemented.
+  - `GET /cgi-bin/DocDB/RetrieveFile?docid=N&filename=F[&version=M]` —
+    file download into bounded CMcpS storage (verified: fetch of the
+    LAGG rules PDF, docid 14372, 315 kB).
+- **Tools** (4): `docdb_get_document`, `docdb_search`, `docdb_list_recent`,
+  `docdb_download_file`.
+- **Not turned down lightly**: DocDB search POST endpoint — read-only
+  semantics in principle, but the Keycloak proxy rejects it outright;
+  keeping it out also preserves the GET-only guarantee.

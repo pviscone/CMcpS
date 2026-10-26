@@ -159,6 +159,12 @@ CMSRESULTS_TOOLS = {
     "cmsresults_get_paper",
     "cmsresults_download_file",
 }
+DOCDB_TOOLS = {
+    "docdb_get_document",
+    "docdb_search",
+    "docdb_list_recent",
+    "docdb_download_file",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -180,6 +186,7 @@ ALL_TOOLS = (
     | ELOG_TOOLS
     | CMSSEARCH_TOOLS
     | GLANCE_TOOLS
+    | DOCDB_TOOLS
     | PDFTOOLS_TOOLS
 )
 
@@ -280,6 +287,10 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "glance_list_alcm_working_groups": {},
     "glance_alcm_members": {},
     "glance_membership_search_members": {"query": "piero"},
+    "docdb_get_document": {"docid": 14372},
+    "docdb_search": {"text": "authorship"},
+    "docdb_list_recent": {},
+    "docdb_download_file": {"docid": 14372, "filename": "a.pdf"},
     "xsdb_search": {"particles": "ttbar"},
     "xsdb_list_tables": {},
     "hltinfo_list_menus": {},

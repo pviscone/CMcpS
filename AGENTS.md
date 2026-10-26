@@ -221,9 +221,10 @@ After a real SSO session became available, the two deferred platforms were deliv
 - `glance_*` (11): ALCM/CADI and Membership SPAs at cmsfence.cern.ch use per-app Keycloak **Bearer** tokens (audiences `cms-alcm-api-prod` / `cms-membership-api-prod`) issued via RFC 8693 token exchange; `cern_auth_sign_in` captures them (`BEARER_SERVICES`), refresh goes through refresh→re-exchange (`BEARER_SERVICE_EXCHANGE_AUDIENCES`) because a plain refresh loses the API audience. Cookie-only calls answer 401. Env fallbacks `CMCPS_GLANCE_ALCM_TOKEN`/`CMCPS_GLANCE_MEMBERSHIP_TOKEN`. `glance_search_notes` needs `CMCPS_MAX_RESPONSE_BYTES` > ~16 MB (single ~15 MB upstream index). Incubator SPA not implemented (nothing useful read-only).
 - `cmssearch_*` (4): FastAPI "CERN Batch Docs Search" (public OpenAPI, Keycloak-proxied) — search, document, sources, index stats. Cookie SSO suffices.
 - `cmssdt_*` extended (+7, now 8): IB queues, per-arch latest-IB summary, IB comparison details, CMSSW labels, open PRs per release family, RelVal archs, and a pure-derivation build-log URL tool.
+- `docdb_*` (4): CMS DocDB (cms-docdb.cern.ch) is Perl-CGI HTML-only; GET search (Keycloak blocks the POST form), ShowDocument metadata parse, see-recent list, RetrieveFile downloads. cms-docdb serves a CERN Grid CA host certificate absent from certifi, so the shared client now uses the system CA store. Live-verified (LAGG document 14372: search, get, PDF download).
 - uvx: `uvx --from <path-or-git-url> cmcps` verified (106 tools over stdio); plain `uvx cmcps` awaits a PyPI publish.
 
-106 tools total; full suite/lint/build green; SDT/GLANCE/CMS-search live-verified with an SSO session (GLANCE through the refresh→exchange chain).
+110 tools total; full suite/lint/build green; SDT/GLANCE/CMS-search/DocDB live-verified with an SSO session (GLANCE through the refresh→exchange chain).
 
 ### M3 verification
 

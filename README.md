@@ -286,6 +286,15 @@ GLANCE exposes separate Keycloak **Bearer-only** APIs per application — browse
 - `glance_membership_search_members` — CMS member search by name (`query` required), paginated client-side.
 - `glance_download_attachment` — download one GLANCE attachment version (PAPER/PAS drafts, analysis-note PDFs, CWR documents) into CMcpS storage by exact version `filename` (e.g. `HIG-23-004-paper-v10.pdf`). The files are served from `cms-alcm.web.cern.ch` behind SSO **session cookies** (not Bearer tokens): the sign-in cookie capture includes that host, and an HTML login page is detected and reported instead of being saved as a file.
 
+## CMS DocDB tools (cms-docdb.cern.ch)
+
+The CMS Document Database is a modified Perl-CGI DocDB (8.9.0) with an HTML-only surface — no JSON API, and the search form is a POST blocked by the Keycloak fronted proxy ("Invalid Request"); `XSearch` covers *other* DocDB installations only. All tools therefore use parseable GET endpoints, SSO session required throughout. A missing or non-visible document renders an HTTP 200 "Not authorized" page, which `docdb_get_document` maps to a non-retryable error. TLS note: cms-docdb serves a host certificate from the CERN Grid Certification Authority, which is absent from the certifi bundle; the shared client trusts the system CA store for this reason.
+
+- `docdb_get_document` — metadata of one document by numeric docid (e.g. 14372 from a URL), optional older `version`: canonical id (CMS-doc-N-vM), title, doc type, submitter/updater, created/contents-revised/metadata-revised dates, viewable+modifiable groups, abstract, files with exact RetrieveFile download URLs, older-version history, topic paths, authors (name/authorid/institute), keywords.
+- `docdb_search` — GET search: full text (`text`, DocDB simple search across title/abstract/keywords/authors) and/or title-only (`title`), optional `updated_from`/`updated_to` (YYYY-MM-DD; mapped onto DocDB's day/month-name/year filter triples). One row per document (docid, canonical, title, first author, topics, last updated); offset/limit paginate client-side over the results table.
+- `docdb_list_recent` — documents modified in the last `days` days (DocDB 'see recent'). `ListBy?alldocs=1` exceeds the response policy on the real corpus and is intentionally not exposed.
+- `docdb_download_file` — bounded download of one document file (RetrieveFile) by docid + exact `filename` (+optional `version`) taken from `docdb_get_document`.
+
 ## MkDocs tools (docs.cern.ch and any MkDocs site)
 
 Generic MkDocs (Material) reader: the site search index drives search/listing, pages are fetched as rendered HTML and stripped to plain text. SSO-protected sites (all `*.docs.cern.ch`) work through the SSO cookie session after `cern_auth_sign_in`. `base_url` is the site root (e.g. `https://cms-l1t-correlator.docs.cern.ch`).
