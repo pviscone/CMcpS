@@ -413,3 +413,59 @@ Authenticated discovery (browser network inspection) found the mechanism:
 - **Not turned down lightly**: DocDB search POST endpoint — read-only
   semantics in principle, but the Keycloak proxy rejects it outright;
   keeping it out also preserves the GET-only guarantee.
+
+## CMS HyperNews archive (hypernews.cern.ch) — delivered
+
+- **Discovery date**: 2026-10-26 (authenticated probes against the live site;
+  routes cross-checked against the open-source viewer,
+  github.com/henryiii/hypernewsviewer).
+- **Status of the service**: CMS HyperNews was **discontinued at the end of
+  2022 in favor of CMS Talk** (Discourse, cms-talk.web.cern.ch); 2022 was the
+  overlap year. The site is a read-only archive; the viewer banner says
+  "read-only archive" and the search date inputs are clamped to
+  2000-01-01..2022-12-31. Every tool description carries this notice.
+- **Surface**: server-rendered HTML only (Flask + Jinja), no JSON API — the
+  adapter is a marked HTML-parsing fallback, like TWiki/DocDB.
+- **Auth**: the whole site sits behind an oauth2-proxy (client
+  `webframeworks-paas-hypernewsviewer`) fronting CERN SSO; anonymous → 302 to
+  Keycloak. The shared SSO cookie session completes the handshake silently
+  (verified live).
+- **Endpoints** (all GET, all verified live):
+  - `GET /HyperNews/CMS/search?query=Q[&start=D][&stop=D][&page=N]` —
+    SQLite FTS5 full-text search, 50 results per page, FTS5 query syntax
+    (phrases, AND/OR/NOT); simple queries run several seconds (~10 s).
+    Results are `<div class="searchresult">` blocks: `/HyperNews/CMS/get//…`
+    title anchor (note the double slash — `responses` begins with `/`),
+    `YYYY-MM-DD HH:MM:SS` timestamp, `view-member.pl?responses=<user>`
+    author anchor, snippet `<p>` with `<mark>`.
+  - `GET /HyperNews/CMS/index` — all forums (~2900, ~640 KB page) sorted by
+    last activity: `<b><a href=…get/NAME.html>TITLE</a></b> (YYYY-MM-DD)`.
+  - `GET /HyperNews/CMS/cindex` — same forums grouped under
+    `<div class="categoryheader">Category: NAME</div>`; used to resolve the
+    `category` filter of `hypernews_list_forums`.
+  - `GET /HyperNews/CMS/get/<forum>` — forum page (`<title>` + top-level
+    threads in `<div class="listing"><ol>` `<li value=N>` items, author/date
+    in `<em>(…)</em>`, reply counts as `N reply|replies`).
+  - `GET /HyperNews/CMS/get/<forum>/<msg>[/<sub>…]` — message page: title
+    `<h2>`, `Forum:`/`Date:`/`From:` header (`From` anchor carries the
+    username both as query key and as `&lt;user&gt;`), body either wrapped in
+    `<!--  start/end message body  -->` markers (plain-text content type) or
+    as a bare `<div>` after the header `<dl>` (HTML content type), replies in
+    the same listing structure. A missing message inside an existing forum
+    returns HTTP 200 plain text "Unable to find message: …"; a missing forum
+    or member makes the viewer raise HTTP 500.
+  - `GET /HyperNews/CMS/view-member.pl?<username>` — member profile as flat
+    `key: value<br>` lines (user_id, name, user_url, email, status, …). The
+    route destructures the first query *key* as the username, so the
+    parameter name itself carries it.
+  - `GET /HyperNews/CMS/get/AUX/<path>` — attachments (verified live:
+    717 KB PDF from TOP-16-001/78/2/1). Bodies reference them with
+    site-relative (`get/AUX/…`) and absolute URLs, lowercase and uppercase
+    `HREF` — extraction is case-insensitive and normalizes all forms.
+- **Tools** (6): `hypernews_search`, `hypernews_list_forums`,
+  `hypernews_get_forum`, `hypernews_get_message`, `hypernews_get_member`,
+  `hypernews_download_file`.
+- **Not implemented**: `view-members.pl` (member directory browsing, no
+  lookup value over `hypernews_get_member`), `top.pl` (static welcome page),
+  the `?dir=next-in-thread|nextResponse` redirects (the flags are reported on
+  the message instead).

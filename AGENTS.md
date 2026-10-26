@@ -224,9 +224,10 @@ After a real SSO session became available, the two deferred platforms were deliv
 - `cmssearch_*` (4): FastAPI "CERN Batch Docs Search" (public OpenAPI, Keycloak-proxied) — search, document, sources, index stats. Cookie SSO suffices.
 - `cmssdt_*` extended (+7, now 8): IB queues, per-arch latest-IB summary, IB comparison details, CMSSW labels, open PRs per release family, RelVal archs, and a pure-derivation build-log URL tool.
 - `docdb_*` (4): CMS DocDB (cms-docdb.cern.ch) is Perl-CGI HTML-only; GET search (Keycloak blocks the POST form), ShowDocument metadata parse, see-recent list, RetrieveFile downloads. cms-docdb serves a CERN Grid CA host certificate absent from certifi, so the shared client now uses the system CA store. Live-verified (LAGG document 14372: search, get, PDF download).
+- `hypernews_*` (6): CMS HyperNews archive (hypernews.cern.ch) — discontinued end of 2022 in favor of CMS Talk (2022 overlap year; stated in every tool description). HyperNewsViewer is HTML-only behind OAuth-proxy SSO; FTS5 search (50/page, dates clamped to 2000-2022), forums by activity+category, forum threads, message detail (header/body/replies, "Unable to find message" 200 → 404-class error, missing forum/member → 500), member profiles (username passed as query *key*), AUX attachment extraction (case-insensitive, relative+absolute) and bounded downloads. Live-verified end to end (search, forums, message, member, 717 KB attachment download).
 - uvx: `uvx --from <path-or-git-url> cmcps` verified (106 tools over stdio); plain `uvx cmcps` awaits a PyPI publish.
 
-110 tools total; full suite/lint/build green; SDT/GLANCE/CMS-search/DocDB live-verified with an SSO session (GLANCE through the refresh→exchange chain).
+122 tools total; full suite/lint/build green; SDT/GLANCE/CMS-search/DocDB/HyperNews live-verified with an SSO session (GLANCE through the refresh→exchange chain).
 
 ### M3 verification
 

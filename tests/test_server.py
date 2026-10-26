@@ -165,6 +165,14 @@ DOCDB_TOOLS = {
     "docdb_list_recent",
     "docdb_download_file",
 }
+HYPERNEWS_TOOLS = {
+    "hypernews_search",
+    "hypernews_list_forums",
+    "hypernews_get_forum",
+    "hypernews_get_message",
+    "hypernews_get_member",
+    "hypernews_download_file",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -188,6 +196,7 @@ ALL_TOOLS = (
     | GLANCE_TOOLS
     | DOCDB_TOOLS
     | PDFTOOLS_TOOLS
+    | HYPERNEWS_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
@@ -291,6 +300,14 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "docdb_search": {"text": "authorship"},
     "docdb_list_recent": {},
     "docdb_download_file": {"docid": 14372, "filename": "a.pdf"},
+    "hypernews_search": {"query": "laser"},
+    "hypernews_list_forums": {},
+    "hypernews_get_forum": {"forum": "hnTest"},
+    "hypernews_get_message": {"forum": "hnTest", "path": "1"},
+    "hypernews_get_member": {"username": "elmer"},
+    "hypernews_download_file": {
+        "download_url": "https://hypernews.cern.ch/HyperNews/CMS/get/AUX/2005/12/05/a.pdf"
+    },
     "xsdb_search": {"particles": "ttbar"},
     "xsdb_list_tables": {},
     "hltinfo_list_menus": {},

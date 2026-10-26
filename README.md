@@ -295,6 +295,17 @@ The CMS Document Database is a modified Perl-CGI DocDB (8.9.0) with an HTML-only
 - `docdb_list_recent` — documents modified in the last `days` days (DocDB 'see recent'). `ListBy?alldocs=1` exceeds the response policy on the real corpus and is intentionally not exposed.
 - `docdb_download_file` — bounded download of one document file (RetrieveFile) by docid + exact `filename` (+optional `version`) taken from `docdb_get_document`.
 
+## CMS HyperNews archive tools (hypernews.cern.ch)
+
+CMS HyperNews was **discontinued at the end of 2022 in favor of CMS Talk** (Discourse, cms-talk.web.cern.ch), with 2022 as the overlap year when both systems ran. What remains at hypernews.cern.ch is a read-only archive (pre-2023 discussion only) served by [HyperNewsViewer](https://github.com/henryiii/hypernewsviewer): server-rendered HTML only, no JSON API, behind an oauth2-proxy fronting CERN SSO — so these tools are explicit HTML parsing over the shared SSO cookie session, and every tool description repeats the discontinuation notice (for 2023+ discussion use `discourse_*` with `site='cms-talk'`). A missing forum/member makes the viewer raise HTTP 500; a missing message inside an existing forum returns HTTP 200 with "Unable to find message" and is mapped to a non-retryable 404-class error.
+
+- `hypernews_search` — full-text search (SQLite FTS5 syntax) over all archived posts, 50 per page, optional `start`/`stop` date filters (YYYY-MM-DD, archive range 2000-01-01..2022-12-31): title, forum, message path, timestamp, author username, snippet.
+- `hypernews_list_forums` — all ~2900 forums sorted by last activity, client-side `category` (substring, resolved via the cindex page) and `title_contains` filters; gives the forum names accepted by the tools below.
+- `hypernews_get_forum` — top-level threads of one forum: message number, title, author, date, reply count.
+- `hypernews_get_message` — one message by forum + slash-separated path (e.g. `788/2`): title, date, author name/username, plain-text body (both marker-wrapped plain-text bodies and bare-HTML bodies), direct replies, attachment URLs, next-in-thread/next-in-forum flags.
+- `hypernews_get_member` — member profile by exact case-sensitive username (the viewer route reads the first query-string *key* as the username): display name, email, homepage, status, and all remaining profile fields.
+- `hypernews_download_file` — bounded download of a `/HyperNews/CMS/get/AUX/…` attachment into CMcpS storage; archived bodies use both site-relative and absolute, lowercase and uppercase `HREF` forms — all are normalized.
+
 ## MkDocs tools (docs.cern.ch and any MkDocs site)
 
 Generic MkDocs (Material) reader: the site search index drives search/listing, pages are fetched as rendered HTML and stripped to plain text. SSO-protected sites (all `*.docs.cern.ch`) work through the SSO cookie session after `cern_auth_sign_in`. `base_url` is the site root (e.g. `https://cms-l1t-correlator.docs.cern.ch`).

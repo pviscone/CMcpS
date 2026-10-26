@@ -20,6 +20,7 @@ from cmcps.tools.gitlab import register_gitlab_tools
 from cmcps.tools.glance import register_glance_tools
 from cmcps.tools.gocms import register_gocms_tools
 from cmcps.tools.hltinfo import register_hltinfo_tools
+from cmcps.tools.hypernews import register_hypernews_tools
 from cmcps.tools.indico import register_indico_tools
 from cmcps.tools.inspire import register_inspire_tools
 from cmcps.tools.jira import register_jira_tools
@@ -57,4 +58,5 @@ def register_adapter_tools(
     register_cmssearch_tools(server, settings, auth, http)
     register_glance_tools(server, settings, auth, http)
     register_docdb_tools(server, settings, auth, http)
+    register_hypernews_tools(server, settings, auth, http)
     register_pdftools_tools(server, settings, auth, http)
