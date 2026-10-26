@@ -37,6 +37,8 @@ M1 ships authentication first and gates every tool on it. M2 merges the four exi
 
 ### M1 — Authentication and server foundation
 
+Authoritative reference for CERN authentication (Keycloak/OIDC flows, SSO session behavior, token exchange used by the GLANCE-style Bearer adapters): https://auth.docs.cern.ch — official CERN Authentication and Authorization Service docs. Consult it when touching `cern_auth_sign_in`, cookie/token persistence, refresh, or RFC 8693 exchanges.
+
 1. Review the reference MCP implementations for runtime, dependency, and license constraints before choosing the final implementation language and packaging.
 2. Create the shared MCP server foundation:
    - `auth`: browser-backed CERN SSO session, cookie/token persistence, expiry checks, and refresh/relogin handling.
