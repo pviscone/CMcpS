@@ -469,3 +469,41 @@ Authenticated discovery (browser network inspection) found the mechanism:
   lookup value over `hypernews_get_member`), `top.pl` (static welcome page),
   the `?dir=next-in-thread|nextResponse` redirects (the flags are reported on
   the message instead).
+
+## CERN Admin e-guide (admin-eguide.web.cern.ch) — delivered
+
+- **Platform**: Drupal 9 (meta-generator) behind CERN Keycloak
+  (`webframeworks-drupal-admin-eguide` client); English (`/en`) and French
+  (`/fr`) content. French aliases are also served without a language prefix
+  (`/procedure/visas-...`).
+- **Discovery**: no JSON API surface; `/sitemap.xml` is 404; the node-search
+  endpoint is Drupal core search. Anonymous visitors only see the home page's
+  public-procedures subset; `/{lang}/search/node`, `/{lang}/index-procedures`
+  and all internal procedures 302 to `auth.cern.ch`. With an SSO session all
+  return 200 (verified against the stored session, 2026-10-26).
+- **Endpoints used** (all GET):
+  - `/{lang}/search/node?keys=<q>&page=<n>` — 10 results/page; result list
+    `<h2>Search results</h2><ol>` rows carry `h3[lang]` + absolute URL + `<p>`
+    snippet; `?page=N` pager when there are more. Cross-language results.
+  - `/{lang}/index-procedures` — A-Z view; interleaved `<h3>` letter headers
+    and `views-row` anchors, optional `(FAQ)` companion link per row. 183
+    procedure links when authenticated (probed). One row ("Life Insurance")
+    precedes the first letter header.
+  - `/{lang}/procedure/<slug>` — node page: `h1.page-header` title,
+    `views-field-field-access` (public), `views-field-changed` (dd.mm.yyyy),
+    `views-field-field-date-creation`, `views-field-field-processus-approbation`,
+    `views-field views-field-body` (General), `views-field views-field-field-procedure`,
+    `views-field-field-revisions` (`div.revision-table` rows:
+    no/changes/approved-on), `views-field-field-ref-contacts` (contact teaser
+    articles), sidebar blocks headed by `h1.text-center` (Reference documents,
+    Useful documents, External links, Other procedures, Contacts) whose
+    anchors are returned as `related_links`.
+  - Files hosted under `/sites/default/files/...` download directly.
+- **Mapping**: Keycloak login bounce (final URL on `auth.cern.ch` or
+  `<title>Sign in to CERN`) → `AUTH_REQUIRED`; HTTP ≥ 400 → `UPSTREAM_ERROR`
+  (retryable on 429/5xx via `status_code`); a fully unparseable procedure page
+  → `UPSTREAM_ERROR` (not-found render).
+- **Not implemented**: FAQ detail pages (`/en/faq/<slug>`; index/search
+  surface the paths, pages parse as Drupal nodes), contact pages, the
+  `/en/forms` listing, non-procedure content pages (`/en/content/...`),
+  and the cernoverride theme's leaked PHP warning banner (ignored noise).

@@ -165,6 +165,12 @@ DOCDB_TOOLS = {
     "docdb_list_recent",
     "docdb_download_file",
 }
+EGUIDE_TOOLS = {
+    "eguide_search",
+    "eguide_list_procedures",
+    "eguide_get_procedure",
+    "eguide_download_file",
+}
 HYPERNEWS_TOOLS = {
     "hypernews_search",
     "hypernews_list_forums",
@@ -196,6 +202,7 @@ ALL_TOOLS = (
     | GLANCE_TOOLS
     | DOCDB_TOOLS
     | PDFTOOLS_TOOLS
+    | EGUIDE_TOOLS
     | HYPERNEWS_TOOLS
 )
 
@@ -298,6 +305,12 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "glance_membership_search_members": {"query": "piero"},
     "docdb_get_document": {"docid": 14372},
     "docdb_search": {"text": "authorship"},
+    "eguide_search": {"query": "visa"},
+    "eguide_list_procedures": {},
+    "eguide_get_procedure": {"slug": "cern-access-card"},
+    "eguide_download_file": {
+        "download_url": "https://admin-eguide.web.cern.ch/sites/default/files/x.pdf"
+    },
     "docdb_list_recent": {},
     "docdb_download_file": {"docid": 14372, "filename": "a.pdf"},
     "hypernews_search": {"query": "laser"},

@@ -306,6 +306,15 @@ CMS HyperNews was **discontinued at the end of 2022 in favor of CMS Talk** (Disc
 - `hypernews_get_member` — member profile by exact case-sensitive username (the viewer route reads the first query-string *key* as the username): display name, email, homepage, status, and all remaining profile fields.
 - `hypernews_download_file` — bounded download of a `/HyperNews/CMS/get/AUX/…` attachment into CMcpS storage; archived bodies use both site-relative and absolute, lowercase and uppercase `HREF` forms — all are normalized.
 
+## CERN Admin e-guide tools (admin-eguide.web.cern.ch)
+
+Drupal 9 guide to CERN's administrative procedures, English (`/en`) and French (`/fr`). No JSON API or sitemap (`/sitemap.xml` is 404), so the tools parse the rendered HTML. Anonymous visitors only see the few public procedures; the Drupal core search, the full A-Z index and all internal procedures redirect to Keycloak — so sign in first (the adapter maps the login page to `AUTH_REQUIRED`). Search results mix English and French pages regardless of the URL language prefix; French aliases are served without the `/fr` prefix. Live-verified with an SSO session: search (10/page, `?page=N` pager), index (183 procedure links), and procedure detail (incl. an internal entry) all parse anonymously-vs-authenticated as expected.
+
+- `eguide_search` — Drupal core node search over procedures, FAQs and content pages (`query`, 0-based `page`; per-language prefix with `lang`): title, URL, `lang`, `kind` (procedure/faq/content), slug, snippet; `has_more` from the pager.
+- `eguide_list_procedures` — full A-Z index of procedures (internal entries included once authenticated): letter, title, slug, procedure path, optional `(FAQ)` companion path; client-side `title_contains` filter.
+- `eguide_get_procedure` — one procedure page by slug (a bare slug or a `/en/procedure/...` path): title, access (public/internal), creation/last-update dates, approval process, General and Procedure sections as plain text, revision history table, contact units (name + `/contact/...` path), and sidebar link blocks (reference documents, useful documents, other procedures).
+- `eguide_download_file` — bounded download of a file hosted on admin-eguide.web.cern.ch (other hosts such as cds.cern.ch go through that service's tools).
+
 ## MkDocs tools (docs.cern.ch and any MkDocs site)
 
 Generic MkDocs (Material) reader: the site search index drives search/listing, pages are fetched as rendered HTML and stripped to plain text. SSO-protected sites (all `*.docs.cern.ch`) work through the SSO cookie session after `cern_auth_sign_in`. `base_url` is the site root (e.g. `https://cms-l1t-correlator.docs.cern.ch`).

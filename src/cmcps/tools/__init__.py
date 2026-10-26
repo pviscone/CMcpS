@@ -15,6 +15,7 @@ from cmcps.tools.cmssearch import register_cmssearch_tools
 from cmcps.tools.das import register_das_tools
 from cmcps.tools.discourse import register_discourse_tools
 from cmcps.tools.docdb import register_docdb_tools
+from cmcps.tools.eguide import register_eguide_tools
 from cmcps.tools.elog import register_elog_tools
 from cmcps.tools.gitlab import register_gitlab_tools
 from cmcps.tools.glance import register_glance_tools
@@ -58,5 +59,6 @@ def register_adapter_tools(
     register_cmssearch_tools(server, settings, auth, http)
     register_glance_tools(server, settings, auth, http)
     register_docdb_tools(server, settings, auth, http)
+    register_eguide_tools(server, settings, auth, http)
     register_hypernews_tools(server, settings, auth, http)
     register_pdftools_tools(server, settings, auth, http)
