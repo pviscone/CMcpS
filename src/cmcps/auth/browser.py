@@ -708,3 +708,130 @@ async def fetch_page_text(
     finally:
         await _close_resource(context, "fetch-page context")
         await _close_resource(browser, "fetch-page browser")
+
+
+async def _capture_html(
+    page: Page,
+    settings: Settings,
+    url: str,
+    text: str,
+    *,
+    found: bool,
+    marker: str | None,
+    settle_seconds: float,
+    deadline: float,
+) -> dict[str, Any] | None:
+    """Snapshot the rendered page into the fetcher payload (HTML + text).
+
+    Lazy apps (GWT/GXT) paint their shell — including the marker — before
+    async data hydrates the grid; when the marker matched, settle up to the
+    deadline first so the captured HTML carries rows, not the empty shell.
+    """
+    if found and settle_seconds > 0:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining > 0:
+            await asyncio.sleep(min(settle_seconds, remaining))
+        try:
+            text = await page.inner_text("body")
+        except PlaywrightError:
+            pass
+    try:
+        html = await page.content()
+        title = await page.title() or None
+    except PlaywrightError:
+        return None
+    final_host = urlsplit(page.url).hostname or ""
+    return {
+        "url": url,
+        "final_url": page.url,
+        "title": title,
+        "text": text,
+        "html": html,
+        "marker_found": found if marker is not None else None,
+        "auth_divert": final_host in {settings.sso_identity_host, _AUTHFLOW_HOST},
+    }
+
+
+async def fetch_page_html_text(
+    settings: Settings,
+    storage_state: dict[str, Any],
+    url: str,
+    wait_for: str | None = None,
+    *,
+    interact: PortalInteract | None = None,
+    interact_even_if_found: bool = False,
+    settle_seconds: float = 0.0,
+    timeout_seconds: int = FETCH_DEFAULT_TIMEOUT_SECONDS,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Render one SSO-protected page headlessly and return HTML plus visible text.
+
+    Companion to :func:`fetch_page_text` for DOM-scraping adapters that need
+    anchors and grid markup, not only ``innerText``. When ``interact`` is
+    provided and the ``wait_for`` marker does not appear on the first load,
+    the hook runs once (e.g. an SP-as sign-in click that completes silently
+    against the stored identity), the page is navigated back to ``url`` and
+    the marker poll resumes for the remaining budget. By default the hook
+    only runs when the marker never appears; ``interact_even_if_found``
+    forces it anyway (for SPAs whose anonymous page already shows the
+    marker). Payload carries
+    ``html``, ``text``, ``final_url``, ``title``, ``marker_found`` and
+    ``auth_divert``.
+    """
+    marker = wait_for.casefold() if wait_for else None
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    browser: Browser | None = None
+    context: BrowserContext | None = None
+
+    async def _load_and_poll() -> tuple[str, bool]:
+        await page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=min(30_000, timeout_seconds * 1000),
+        )
+        return await _poll_body_text(
+            page,
+            marker=marker,
+            poll_seconds=settings.sso_poll_seconds,
+            deadline=deadline
+            if interact is None
+            else (deadline + asyncio.get_running_loop().time()) / 2,
+        )
+
+    try:
+        async with async_playwright() as playwright:
+            browser = await _launch_browser(settings, playwright, headless=True)
+            context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
+            page = await context.new_page()
+            try:
+                text, found = await _load_and_poll()
+            except PlaywrightError:
+                logger.debug("Fetch-page-html load failed for %s", url)
+                return None
+            if interact is not None and (not found or interact_even_if_found):
+                try:
+                    acted = await interact(page)
+                except PlaywrightError:
+                    logger.debug("Fetch-page-html interaction failed for %s", url)
+                    return None
+                if acted:
+                    try:
+                        text, found = await _load_and_poll()
+                    except PlaywrightError:
+                        logger.debug("Fetch-page-html reload failed for %s", url)
+                        return None
+            payload = await _capture_html(
+                page,
+                settings,
+                url,
+                text,
+                found=found,
+                marker=marker,
+                settle_seconds=settle_seconds,
+                deadline=deadline,
+            )
+            if payload is None:
+                return None
+            return payload, await context.storage_state()
+    finally:
+        await _close_resource(context, "fetch-page-html context")
+        await _close_resource(browser, "fetch-page-html browser")

@@ -15,6 +15,7 @@ from cmcps.auth.browser import (
     capture_bearer_service,
     collect_sso_identity,
     extract_local_storage_value,
+    fetch_page_html_text,
     fetch_page_text,
     render_page_html,
     warm_cookie_sites,
@@ -62,6 +63,12 @@ LocalStorageExtractor = Callable[
 ]
 PageFetcher = Callable[
     [Settings, dict[str, Any], str, str | None, int],
+    Awaitable["tuple[dict[str, Any], dict[str, Any]] | None"],
+]
+# HTML fetcher; implementations also accept keyword-only
+# interact/settle_seconds/timeout_seconds.
+PageHtmlFetcher = Callable[
+    [Settings, dict[str, Any], str, str | None],
     Awaitable["tuple[dict[str, Any], dict[str, Any]] | None"],
 ]
 BearerServiceCaptor = Callable[
@@ -114,6 +121,7 @@ class AuthService:
         site_warmer: SiteWarmer = warm_cookie_sites,
         storage_extractor: LocalStorageExtractor = extract_local_storage_value,
         page_fetcher: PageFetcher = fetch_page_text,
+        page_html_fetcher: PageHtmlFetcher = fetch_page_html_text,
         bearer_captor: BearerServiceCaptor = capture_bearer_service,
     ) -> None:
         self.settings = settings
@@ -123,6 +131,7 @@ class AuthService:
         self.site_warmer = site_warmer
         self.storage_extractor = storage_extractor
         self.page_fetcher = page_fetcher
+        self.page_html_fetcher = page_html_fetcher
         self.bearer_captor = bearer_captor
 
     @property
@@ -390,6 +399,53 @@ class AuthService:
         if truncated:
             payload["text"] = text[:max_chars]
         payload["truncated"] = truncated
+        return payload
+
+    async def fetch_page_html(
+        self,
+        url: str,
+        *,
+        wait_for: str | None = None,
+        interact: PortalInteract | None = None,
+        interact_even_if_found: bool = False,
+        settle_seconds: float = 0.0,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Render one SSO-protected page headlessly and return HTML plus text.
+
+        Like :meth:`fetch_page`, for DOM-scraping adapters that need anchors
+        and grid markup. ``interact`` runs once when the marker never appears
+        on first load (e.g. an SP-as sign-in click), then the page is
+        re-navigated to ``url`` and the marker poll resumes. Persists the
+        refreshed cookie jar; returns the fetcher payload (``url``,
+        ``final_url``, ``title``, ``text``, ``html``, ``marker_found``,
+        ``auth_divert``) or ``None`` on the same conditions as fetch_page.
+        """
+        record = self._authenticated_record(url)
+        if record is None:
+            return None
+        timeout = (
+            timeout_seconds if timeout_seconds is not None else (FETCH_DEFAULT_TIMEOUT_SECONDS)
+        )
+        try:
+            fetched = await self.page_html_fetcher(
+                self.settings,
+                record.storage_state,
+                url,
+                wait_for,
+                interact=interact,
+                interact_even_if_found=interact_even_if_found,
+                settle_seconds=settle_seconds,
+                timeout_seconds=timeout,
+            )
+        except BrowserUnavailableError:
+            logger.debug("Fetch-page-html skipped; no browser available for %s", url)
+            return None
+        if not fetched:
+            return None
+        payload, refreshed_state = fetched
+        minimized = minimize_storage_state(refreshed_state, self.settings.allowed_hosts)
+        self.store.save(minimized)
         return payload
 
     def _authenticated_record(self, url: str) -> SessionRecord | None:

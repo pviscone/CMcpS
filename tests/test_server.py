@@ -166,6 +166,14 @@ DOCDB_TOOLS = {
     "docdb_list_recent",
     "docdb_download_file",
 }
+EDMS_TOOLS = {
+    "edms_search_text",
+    "edms_search_documents",
+    "edms_get_document",
+    "edms_download_file",
+    "edms_list_document_types",
+    "edms_get_current_user",
+}
 EGUIDE_TOOLS = {
     "eguide_search",
     "eguide_list_procedures",
@@ -213,6 +221,7 @@ ALL_TOOLS = (
     | CMSSEARCH_TOOLS
     | GLANCE_TOOLS
     | DOCDB_TOOLS
+    | EDMS_TOOLS
     | PDFTOOLS_TOOLS
     | EGUIDE_TOOLS
     | HYPERNEWS_TOOLS
@@ -323,6 +332,12 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "glance_membership_search_members": {"query": "piero"},
     "docdb_get_document": {"docid": 14372},
     "docdb_search": {"text": "authorship"},
+    "edms_get_document": {"document_number": "188033"},
+    "edms_search_text": {"query": "milestone"},
+    "edms_search_documents": {"status": "Released"},
+    "edms_download_file": {"document_number": "188033", "filename": "a.pdf"},
+    "edms_list_document_types": {"context_id": "ORG-003107"},
+    "edms_get_current_user": {},
     "eguide_search": {"query": "visa"},
     "eguide_list_procedures": {},
     "eguide_get_procedure": {"slug": "cern-access-card"},

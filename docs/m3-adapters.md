@@ -414,6 +414,107 @@ Authenticated discovery (browser network inspection) found the mechanism:
   semantics in principle, but the Keycloak proxy rejects it outright;
   keeping it out also preserves the GET-only guarantee.
 
+## CERN EDMS (edms.cern.ch) — delivered
+
+- **Discovery date**: 2026-10-27 (authenticated probes through the stored
+  SSO session; API docs found via the official EDMS FAQ).
+- **Surface**: documented JSON REST WS ("EDMS REST WS 1.0.0", apidoc 0.29.0
+  generated 2026-10-01) under `/ws/api`; entry point
+  `https://edms.cern.ch/ws/apidoc/index.html` (itself SSO-gated). No HTML
+  parsing needed.
+- **Auth**: `/ws` is an OAuth2 client (`edms_oidc_ws_prod`) fronted by CERN
+  Keycloak; anonymous requests 302 into the silent OIDC handshake, which the
+  shared cookie session completes transparently — no `_COOKIE_ONLY_SITES`
+  entry, no bearer exchange (verified live).
+- **Endpoints** (all verified live):
+  - `GET /ws/api/users/current` — SSO caller's EDMS identity (uic, username,
+    email, display name).
+  - `GET /ws/api/documents/{number}[/{version}]` — document detail; version
+    optional (latest), the literal `LAST_RELEASED` resolves (doc 188033 →
+    v0). Fields: title, authors, dates, context, type, releaseProc,
+    status(+color), visibility, keywords, files (name/size/lastModified*,
+    optional `convertedPdfUrl`). Unknown documents answer **HTTP 400** with a
+    JSON `{"exitInfo": [...]}` body — never 404 (verified for
+    `99999999999/1`). Visibility-RESTRICTED documents are masked exactly
+    the same (verified: AT-MEL traveller 319622/1, listed by the
+    parent-scoped search, detail denied) — the adapter maps both to a
+    non-retryable "not found or not visible" error. Document numbers up to
+    ~10 digits.
+  - `GET /ws/api/documents?<filters>` — PARENT-STRUCTURE listing, not a
+    global filter search: `parentObjectType/parentObjectId[/
+    parentObjectVersion]/assetAndJobs` scope it (verified: `A` +
+    `HCMB__A025-10004120` → 1 doc; `D` + doc id → empty), and
+    `type/attributes/context/status/releaseProcedure/obsolete` narrow it
+    further (verified: `status=In Work` keeps the doc, `status=Released`
+    drops it). **Without a parent scope every filter combination returns
+    EMPTY** for an ordinary account (verified: status, type, context,
+    obsolete, all 0 hits). Envelope is `{"exitInfo": [], "documents":
+    [...]}` (the apidoc sample omits the outer object); no full-text
+    parameter, no server-side paging or totals → client-side offset/limit.
+    The listing exposes metadata (title etc.) of documents the caller
+    cannot open in detail (see the 319622 masking above).
+  - `GET /ws/api/files/{number}/{version}/{fileName}` — raw file download
+    (verified: doc 1525125 v5 `Searching_EDMS.pdf`, 1.6 MB); `LAST_RELEASED`
+    accepted for the version.
+  - `GET /ws/api/documentTypes?contextId=<id>[&cadimType=…]` — document
+    types per context; **contextId is mandatory** (400 "contextId parameter
+    is mandatory") although the apidoc marks every parameter optional
+    (verified: `ORG-003107` + `TEXTFILE` → 14 types).
+  - `GET /ws/api/contexts` — **broken upstream**: HTTP 500 for every
+    parameter combination (bare and all four documented `template` values;
+    cross-checked through a full browser session). Not exposed; context
+    names/ids (e.g. `EDMS-SERVICE-PUBLIC`, `PLM`, `ORG-003107`) are read
+    from document details.
+- **UI full-text search** (`edms_search_text`, 2026-10-27): the REST WS
+  has no text search and the UI's own search is GWT-RPC (POST, obfuscated
+  per redeploy), so the only read-only text search is scraping the UI
+  itself. The results page is **deep-linkable**:
+  `/ui/#!master/search/view?objecttype=document&query=<q>&latestversion=
+  false&hideobsolete=true&dadvanced=false&global=true` (verified: typing
+  "ECAL milestones" navigates to exactly this fragment). Flow implemented
+  in `adapters/edms_ui.py` on top of the new
+  `auth/browser.py:fetch_page_html_text` (HTML+text snapshot, optional
+  one-shot `interact`, `settle_seconds`): render → wait for the "Per page"
+  marker → settle 5 s (the GWT shell paints the chrome before the grid
+  hydrates — without the settle the scrape catches an empty grid) → parse
+  100-row document grid + section totals ("Docs & Files (100+)", Projects,
+  Items, Assets, F. Positions, Systems, Locations). Anonymous pages still
+  show the markers, so login is detected from the banner's "Sign in"
+  anchor and a second pass forces the interact (sign-in click completes
+  silently; the UI session cookie then persists in the stored state and
+  later searches take the fast path). Rows dedup key = `<code> v.<version>`;
+  numeric document ids come from the `/file/<id>/<version>/<name>` anchors
+  or numeric id cells ("3481902 v.0.1"); formal codes (CMS-EC-SG-0004)
+  surface as `code`. Verified live: 'ECAL milestones' → 64 items page 1
+  (top hit EDMS 350221 v.6), 9 s warm / 22 s cold (with silent sign-in);
+  'tracker cooling' → 61 items. Fragility: coupled to GXT classes
+  (`x-grid3-row`, `x-grid3-td-*`, `SearchColumnRenderer*.teaser`) — a UI
+  redeploy can break parsing (fails empty, never mis-parses; fixture
+  `tests/fixtures/edms_ui_search.html` is a captured real page).
+  **Accessibility IS visible in the grid** (first pass missed it, user
+  caught it): logged-in pages mark restricted rows with classes
+  `SearchColumnRendererHelper-title-accessDenied` (title block),
+  `AnchorNoAccess` (grey title anchor) and an icon `title="Access denied"`
+  (red circle-minus). Anonymous pages carry none of these — the generic
+  "You are not logged in" tooltip there is unrelated. Cross-validated
+  against the masked REST probe on live pages both ways
+  (marker ⇔ denied, no-marker ⇒ accessible on a 69/31-row page), so the
+  parser flags `accessible=false` free of requests. Rows without the
+  marker are openable in practice but strictly only the REST detail probe
+  (401-masked 400) proves it: `check_access`/`access` probes cover exactly
+  those (8-way concurrent, ~+10 s/page). The search index stays global
+  metadata — it lists restricted docs (98/98 AT-corpus traveller hits
+  listed, all denied), which is why this flag exists at all.
+- **Tools** (6): `edms_search_text`, `edms_search_documents`,
+  `edms_get_document`, `edms_download_file`, `edms_list_document_types`,
+  `edms_get_current_user`.
+- **Not turned down lightly**: the contexts endpoint (upstream 500 on every
+  variant); assets, config profiles/properties, document-type attributes,
+  equipment codes, release procedures, visibilities, structure views,
+  thumbnails (document-creation UX, low read value); all POST/PUT routes
+  (create document/version, status changes, attach/detach, file upload) —
+  never called; the legacy SOAP web services are superseded by the REST WS.
+
 ## CMS HyperNews archive (hypernews.cern.ch) — delivered
 
 - **Discovery date**: 2026-10-26 (authenticated probes against the live site;
