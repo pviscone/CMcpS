@@ -65,6 +65,7 @@ class SafeHttpClient:
         self._client = client or httpx.AsyncClient(
             follow_redirects=False, trust_env=False, verify=ssl.create_default_context()
         )
+        self._grid_client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> SafeHttpClient:
         return self
@@ -75,6 +76,54 @@ class SafeHttpClient:
     async def aclose(self) -> None:
         if self._owned_client:
             await self._client.aclose()
+        if self._grid_client is not None:
+            await self._grid_client.aclose()
+
+    def _client_for(self, url: str) -> httpx.AsyncClient:
+        """Pick the transport for ``url``: the grid-cert client for its hosts, else default.
+
+        The CMS web front-end (cmsweb.cern.ch) has no SSO-cookie login flow:
+        it authenticates X509 grid client certificates over TLS. Requests to a
+        host in ``settings.grid_cert_hosts`` use a lazily built SSL context
+        that loads the configured cert/key. A test-injected client always
+        wins, so no real credential ever touches a mock transport.
+        """
+        if not self._owned_client:
+            return self._client
+        host = urlsplit(url).hostname
+        if host is None or not any(
+            host == allowed or host.endswith(f".{allowed}")
+            for allowed in self.settings.grid_cert_hosts
+        ):
+            return self._client
+        if self._grid_client is None:
+            cert = self.settings.grid_cert_file
+            key = self.settings.grid_key_file
+            if not cert.is_file() or not key.is_file():
+                raise PolicyViolationError(
+                    f"Grid client certificate files are missing ({cert}, {key})",
+                    instructions=(
+                        "Point CMCPS_GRID_CERT_FILE/CMCPS_GRID_KEY_FILE at a valid "
+                        "grid credential (e.g. ~/.globus/usercert.pem/userkey.pem or a "
+                        "voms-proxy-init proxy)."
+                    ),
+                )
+            context = ssl.create_default_context()
+            try:
+                context.load_cert_chain(str(cert), str(key))
+            except (ssl.SSLError, OSError, ValueError) as exc:
+                raise PolicyViolationError(
+                    f"Grid client certificate could not be loaded ({cert}, {key})",
+                    instructions=(
+                        "The key may be passphrase-protected: provide an unencrypted "
+                        "key or a voms-proxy-init proxy via "
+                        "CMCPS_GRID_CERT_FILE/CMCPS_GRID_KEY_FILE."
+                    ),
+                ) from exc
+            self._grid_client = httpx.AsyncClient(
+                follow_redirects=False, trust_env=False, verify=context
+            )
+        return self._grid_client
 
     async def _cookie_for(self, url: str, *, authenticated: bool) -> str | None:
         if not authenticated:
@@ -241,7 +290,7 @@ class SafeHttpClient:
             if cookie := await self._cookie_for(target, authenticated=authenticated):
                 request_headers["Cookie"] = cookie
             try:
-                async with self._client.stream(
+                async with self._client_for(target).stream(
                     safe_method,
                     target,
                     params=params if redirects_seen == 0 else None,
@@ -476,7 +525,7 @@ class SafeHttpClient:
                     headers: dict[str, str] = dict(service_headers or {})
                     if session and (header := session.cookie_header_for(target)):
                         headers["Cookie"] = header
-                    async with self._client.stream(
+                    async with self._client_for(target).stream(
                         "GET",
                         target,
                         headers=headers or None,

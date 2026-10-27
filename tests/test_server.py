@@ -125,6 +125,12 @@ DAS_TOOLS = {
     "das_search",
     "das_get_dataset_info",
 }
+DQM_TOOLS = {
+    "dqm_list_samples",
+    "dqm_get_workspace",
+    "dqm_get_monitoring_element",
+    "dqm_download_plot",
+}
 MCM_TOOLS = {
     "mcm_get_request",
     "mcm_get_status_and_approval",
@@ -224,6 +230,7 @@ ALL_TOOLS = (
     | MATTERMOST_TOOLS
     | MCM_TOOLS
     | DAS_TOOLS
+    | DQM_TOOLS
     | GOCMS_TOOLS
     | CMSSDT_TOOLS
     | XSDB_TOOLS
@@ -317,6 +324,8 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     # das_search / das_get_dataset_info are intentionally absent: they are not
     # SSO-gated (grid client-certificate auth via dasgoclient). The mcm_*
     # tools are also absent: McM's public REST API is anonymous (no SSO).
+    # The dqm_* tools are absent for the same reason as DAS: cmsweb
+    # authenticates the grid client certificate, never an SSO session.
     "gocms_list_links": {},
     "gocms_get_link": {"link_id": 1},
     "gocms_list_tags": {},

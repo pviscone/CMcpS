@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     dasgoclient_path: str | None = Field(default_factory=_default_dasgoclient)
     grid_cert_file: Path = Field(default_factory=lambda: Path.home() / ".globus" / "usercert.pem")
     grid_key_file: Path = Field(default_factory=lambda: Path.home() / ".globus" / "userkey.pem")
+    # Hosts the CMS web front-end authenticates with an X509 grid client
+    # certificate over TLS (no SSO-cookie flow exists there): requests to one
+    # of these hosts go through a lazy SSL context that loads the cert/key
+    # above instead of carrying SSO cookies.
+    grid_cert_hosts: tuple[str, ...] = ("cmsweb.cern.ch",)
 
     @property
     def session_path(self) -> Path:
@@ -149,7 +154,7 @@ class Settings(BaseSettings):
         """Directory used by future download adapters."""
         return self.state_dir / "downloads"
 
-    @field_validator("identity_cookie_names", "allowed_hosts", mode="before")
+    @field_validator("identity_cookie_names", "allowed_hosts", "grid_cert_hosts", mode="before")
     @classmethod
     def _split_comma_tuple(cls, value: object) -> object:
         if isinstance(value, str) and not value.lstrip().startswith("["):

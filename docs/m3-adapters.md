@@ -736,3 +736,74 @@ Authenticated discovery (browser network inspection) found the mechanism:
   SPA posts to, and any user-account/`sys_user` surface (ACL-uncertain, no
   read-only value for the ask).
 
+
+## CMS DQM GUI (cmsweb.cern.ch/dqm) — delivered
+
+- **Discovery date**: 2026-10-27 (live grid-cert probes against `offline`/`relval`,
+  plus the GUI source at github.com/cms-sw/dqmgui and the front-end
+  configuration at github.com/dmwm/deployment).
+- **Platform**: legacy DQM GUI JSON/HTTP API behind the CMS web front-end;
+  instances map to backends by `frontend/app_dqm_ssl.conf` (`offline`,
+  `online`, `relval`, `relval-test`, `offline-test`, `dev`, ...). The newer
+  v1 routes (`/api/v1/...`, aiohttp app in the dqmgui sources) answer 404 on
+  every deployed instance probed (`offline`, `offline-new`) — legacy API only.
+- **Auth**: **X509 grid client certificate over TLS**. The front-end answers
+  `HTTP 401` with an empty body to every unauthenticated path (no SSO
+  redirect, no cookie login flow; TLS handshake requests a client cert).
+  `AUTH_SPEC:aucookie;limited-proxy;cert;host` — the `cms-auth` cookie is
+  only minted *after* a cert-authenticated request (`frontend/cmsauth.pm`,
+  "for legacy reasons the cookie is set on X509 certificate accesses").
+  Direct cookie requests with a valid CERN SSO session still answer 401
+  (verified headlessly). Implementation: `Settings.grid_cert_hosts`
+  (default `cmsweb.cern.ch`); `SafeHttpClient._client_for` lazily builds an
+  SSL context from `grid_cert_file`/`grid_key_file` for those hosts; an
+  injected test client always wins, so no real credential can touch a mock
+  transport. The DQM tools never go `authenticated=True` (no SSO cookies are
+  sent) and are not behind the SSO guard (auth model identical to DAS).
+- **Surfaces** (all GET):
+  - `data/json/samples?match=<regex>&run=<run>` — sample index.
+    **`match` is a Python regex with `re.search` semantics** (not glob):
+    `/ZeroBias/Run2026F* [...]` matches Run2026A because `F*` = zero-or-more
+    F (verified live). No selectors at all returns every sample (~138 MB
+    verified) — the adapter requires at least one of match/run. Same
+    (run,dataset) pair can repeat per import version; deduped client-side.
+    Items are `run:"401605"` (or `"401605:15"` with lumi), `dataset`,
+    `importversion`.
+  - `data/json/archive/<run>/<dataset>/<folder..>` — folder content:
+    first entry is a `{"streamerinfo":""}` pseudo-entry, then
+    `{"subdir": name}` (legacy) / `{"subdir": name, "me_count": n}` (new
+    GUI), and ME entries `{obj, path, properties:{kind,type,lumisect,
+    report:{alarm,error,warn,other}}, tag, qresults:[...], nentries,
+    stats:{x,y,z}}`. The dataset must be bare (no leading slash; a leading
+    slash is a 307 normalize redirect). `search=<substring>` filters ME
+    names server-side. **Quirks:** an unknown (run,dataset) pair answers
+    200 with *another* sample's content (e.g. run 999999 returned a live
+    "00 Shift"/AlCaReco tree) — the adapter validates every pair against
+    the samples index (regex-escaped exact lookup) before archive calls;
+    an unknown folder answers 200 with only the streamerinfo pseudo-entry
+    (mapped to a not-found error client-side).
+  - `jsonfairy/archive/<run>/<dataset>/<me>` — JSON ME content for
+    TH1-family (`{"hist":{type,title,stats,xaxis,values,bins:{integral,
+    content}}}`); TH2/profiles and **nonexistent MEs alike** answer
+    `{"hist": "unsupported type"}` (content-type text/html). The adapter
+    resolves the ME through its parent folder listing first: a real
+    not-found error when absent, ROOT-type/stats/qtest metadata either way,
+    a `note` when the type is not serializable.
+  - `plotfairy/archive/<run>/<dataset>/<me>?w=<px>&h=<px>` — rendered PNG.
+    `w`/`h` are **effectively required**: unsized requests and nonexistent
+    MEs alike return the *same* small placeholder image (verified: identical
+    974-byte PNG) with HTTP 200. The adapter always sends explicit
+    dimensions and pre-verifies the ME, so a missing ME is an error rather
+    than a silent placeholder download.
+- **Tools** (4): `dqm_list_samples`, `dqm_get_workspace`,
+  `dqm_get_monitoring_element`, `dqm_download_plot`.
+- **Not implemented**: `/api/v1/*` (not deployed), `plotfairy/overlay` /
+  `jsrootfairy` (no identified consumer value beyond jsonfairy + PNG),
+  online-shift/alarm-manager routes (session/workflow state, not read data),
+  `POST /api/v1/register` (write-capable), `data/json/samples` without
+  selectors (140 MB responses); lumi-granular ME lookups (routed through
+  `run:lumi` item fields the JSON endpoints do not honor distinctly).
+- **Live verification** (grid cert, `offline`): samples exact + regex
+  lookups, archive root/folder/error shapes, jsonfairy TH1 content and
+  unsupported-type shape, plotfairy sized PNG, placeholder plots, 401 without
+  cert; `relval` samples 200.

@@ -235,6 +235,15 @@ DAS QL via the local `dasgoclient` CLI (`dasgoclient -json`), spawned per call w
 - `das_search` — DAS QL: `dataset=/TT*/RunII*/AODSIM`, `block`, `site`, `file`, `run`, `lumi`. Offset paging (`idx`), limit ≤ 50, rows deduplicated per replica; `has_more` from a limit+1 probe (`-json` has no `nresults`, so `total_count` is null).
 - `das_get_dataset_info` — exact dataset attribute record (no wildcards).
 
+## CMS DQM GUI tools (cmsweb.cern.ch/dqm)
+
+Data Quality Monitoring histograms of the DQM GUI — `offline` (PromptReco real data), `online`, `relval`, `relval-test`, `offline-test`, `dev` — through the legacy GUI JSON API (`/data/json`, `/jsonfairy`, `/plotfairy`; the newer `/api/v1` routes are not deployed on cmsweb). Auth is a **grid client certificate over TLS**, not the SSO session: the cmsweb front-end has no cookie login flow and answers every unauthenticated request `401`. The shared client loads `CMCPS_GRID_CERT_FILE`/`CMCPS_GRID_KEY_FILE` (default `~/.globus/usercert.pem`/`userkey.pem`; a `voms-proxy-init` proxy also works) into a lazy SSL context used only for hosts in `CMCPS_GRID_CERT_HOSTS` (default `cmsweb.cern.ch`). These tools are intentionally *not* behind the CERN SSO guard. Verified upstream quirks handled: `match` is a Python **regex** (`re.search`, not glob — write `.*` for wildcards); every (run, dataset) pair is validated against the samples index first because the archive endpoint replies 200 with *another* sample's content for unknown pairs; plotfairy replies 200 with a small placeholder PNG for missing MEs or missing `w`/`h`, so plots pre-verify the ME and always send explicit dimensions.
+
+- `dqm_list_samples` — `(run, lumi, dataset)` samples; `match` regex and/or exact `run` required (an unfiltered query returns ~140 MB upstream).
+- `dqm_get_workspace` — folder listing of one sample: subfolders and monitoring elements with ROOT type, entries, axis stats, quality tests; `folder` descends, `search` filters ME names.
+- `dqm_get_monitoring_element` — one ME by full path: metadata plus JSON bin content when the ROOT type supports it (TH1/profiles; larger types stay metadata-only, image via `dqm_download_plot`).
+- `dqm_download_plot` — rendered PNG (explicit `width`/`height`, 16–4096 px) into local download storage.
+
 ## goCMS tools (gocms.cern.ch)
 
 **CMS go-link (shortlink) service**, not a docs wiki: FastAPI with an anonymous `OpenAPI` spec. 

@@ -198,9 +198,7 @@ async def test_403_is_permission_error_not_auth_required(tmp_path: Path) -> None
 
 async def test_get_user_modes(tmp_path: Path) -> None:
     router = Router()
-    router.add(
-        "GET", "/api/v4/users/username/jdoe", lambda _r: httpx.Response(200, json=USER_DOC)
-    )
+    router.add("GET", "/api/v4/users/username/jdoe", lambda _r: httpx.Response(200, json=USER_DOC))
     router.add("GET", f"/api/v4/users/{USER_ID}", lambda _r: httpx.Response(200, json=USER_DOC))
     client = make_client(tmp_path, router)
 

@@ -15,6 +15,7 @@ from cmcps.tools.cmssearch import register_cmssearch_tools
 from cmcps.tools.das import register_das_tools
 from cmcps.tools.discourse import register_discourse_tools
 from cmcps.tools.docdb import register_docdb_tools
+from cmcps.tools.dqm import register_dqm_tools
 from cmcps.tools.edms import register_edms_tools
 from cmcps.tools.eguide import register_eguide_tools
 from cmcps.tools.elog import register_elog_tools
@@ -54,6 +55,7 @@ def register_adapter_tools(
     register_mattermost_tools(server, settings, auth, http)
     register_mcm_tools(server, settings, http)
     register_das_tools(server, settings)
+    register_dqm_tools(server, settings, http)
     register_gocms_tools(server, settings, auth, http)
     register_cmssdt_tools(server, settings, auth, http)
     register_xsdb_tools(server, settings, auth, http)
