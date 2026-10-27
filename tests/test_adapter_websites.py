@@ -156,9 +156,7 @@ async def test_search_prefix_filters_paging_and_meta(tmp_path: Path) -> None:
     by_owner = await websites.search(client, settings, owner="jdoe")
     assert {i["hostname"] for i in by_owner["items"]} == {"jq.web.cern.ch", "upper.web.cern.ch"}
 
-    by_env = await websites.search(
-        client, settings, environment="paas", category="official"
-    )
+    by_env = await websites.search(client, settings, environment="paas", category="official")
     assert [i["hostname"] for i in by_env["items"]] == ["hlt.docs.cern.ch"]
 
     window = await websites.search(client, settings, limit=1, offset=1)
@@ -215,9 +213,7 @@ def set_cache_age(db_path: Path, *, age_days: float) -> None:
 FetchMock = Callable[[SafeHttpClient, Settings], Awaitable[list[dict[str, Any]]]]
 
 
-async def test_ttl_background_refresh_flow(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_ttl_background_refresh_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     gate = asyncio.Event()
     calls = {"n": 0}
 

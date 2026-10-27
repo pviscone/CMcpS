@@ -132,6 +132,75 @@ platform lands. Testing flags: default tests are fixture-only;
 - **Known limits**: no attachment download tool yet (URLs returned, may
   require SSO to fetch); description truncated at 20000 chars.
 
+## CERN Mattermost (mattermost.web.cern.ch) — delivered
+
+- **Endpoint type**: documented public **Mattermost REST API v4** under
+  `/api/v4` (CERN fork, observed `x-version-id: 11.7.12...cern`; verified
+  2026-10).
+- **Auth**: every API endpoint is login-required — anonymous
+  `GET /api/v4/users/me` answers JSON `401
+  {"id":"api.context.session_expired.app_error"}` (verified). The session
+  credential is the `MMAUTHTOKEN` cookie, minted by the OAuth handshake at
+  `GET /oauth/gitlab/login` → 302 `mm-auth.web.cern.ch/cern-prod/oauth/
+  authorize` (client `mattermost-sso`, cookie `MMOAUTH` en route) →
+  `auth.cern.ch` → `/signup/gitlab/complete`; mm-auth brokers to auth.cern.ch
+  (verified), so the stored KEYCLOAK_IDENTITY completes the whole chain
+  silently. Registered as a `_COOKIE_ONLY_SITES` entry with an
+  `MMAUTHTOKEN`-readiness check; the shared client's lazy warm covers both
+  GETs and the search POST. Optional fallback: `CMCPS_MATTERMOST_TOKEN`
+  personal access token as `Authorization: Bearer` (operator env only).
+- **Endpoints used**:
+  - `GET /api/v4/users/me` (session probe), `GET /api/v4/users/{id}`,
+    `GET /api/v4/users/username/{name}`.
+  - `GET /api/v4/users/me/teams` (array payload). CERN-fork quirk
+    (verified): `page`/`per_page` are ignored and the full list is
+    returned in one call — the tool exposes no paging.
+  - `GET /api/v4/users/me/teams/{team_id}/channels`.
+    CERN-fork quirk (verified): `page`/`per_page` are ignored and the
+    **account-wide** channel list is returned, mixing in every direct (D)
+    and group (G) conversation of the user (`team_id` empty) — the adapter
+    filters to the requested team's channels client-side so the user's DM
+    graph is never echoed; the tool exposes no paging.
+  - `GET /api/v4/teams/{team_id}` — team detail; also resolves the team URL
+    name for channel/permalink links.
+  - `GET /api/v4/channels/{id}` /
+    `GET /api/v4/teams/{team_id}/channels/name/{name}`.
+  - `GET /api/v4/channels/{id}/posts?page=&per_page=&before=&after=` —
+    `{order, posts, prev_post_id, next_post_id}`. Verified semantics:
+    `prev_post_id`/`next_post_id` are the boundary ids toward older/newer
+    history (`next_post_id` == the `before` cursor used to arrive); on the
+    newest page `next_post_id` is empty even when older posts exist, so
+    `has_more` ⇔ `prev_post_id` non-empty. Deeper history:
+    `before=<oldest post id of the current page>` (excludes itself —
+    hole-less).
+  - `GET /api/v4/posts/{id}/thread` — `{order, posts}`; the server order is
+    **not** time-sorted (verified), so the adapter returns the root post
+    first with replies sorted by creation time.
+  - `POST /api/v4/teams/{team_id}/posts/search` — the only POST:
+    `{terms, is_or_search, include_deleted_channels, time_zone, page}`.
+    **Verified quirks on the CERN fork**: cookie-authenticated
+    POSTs 401 instantly unless `X-Requested-With: XMLHttpRequest` is sent
+    (same `api.context.session_expired` id as a truly missing session);
+    results clamp to exactly 100 hits in one page regardless of
+    `per_page` (5/60/200 → 100 — the parameter is not sent),
+    `page` advances through the capped window and an empty page means
+    the end; `matches` is `null`; no hit count. Read-only semantics
+    (same precedent as the ServiceNow portal search; allowlisted in the
+    safety layer, which now also warm-retries JSON POSTs on 401/403 for
+    mapped sites). `has_more` ⇔ page reached the 100-hit cap.
+  - `GET /api/v4/files/{id}/info` + `GET /api/v4/files/{id}` — file
+    metadata then bounded download (server filename reduced to its basename
+    before writing into CMcpS storage).
+- **Normalization**: epoch-millisecond timestamps → ISO-8601; post items
+  carry `user_id` (not usernames — no N+1 user lookups) and `file_ids`;
+  permalinks (`/{team}/pl/<post_id>`) only where the team is known from
+  the call context. 401 → `AUTH_REQUIRED`; 403 stays an upstream permission
+  error (Mattermost uses it for team/channel access denial while logged
+  in).
+- **Known limits**: team listing covers membership only (public-team
+  discovery not exposed); channel `name_contains` filters the fetched page
+  client-side; no reaction/emoji surface; no pinned-post endpoint.
+
 ## McM (cms-pdmv-prod.web.cern.ch/mcm)
 
 - **Endpoint type**: public REST API, self-documented index at

@@ -180,6 +180,84 @@ async def test_download_follows_redirect_and_writes_artifact(tmp_path: Path) -> 
     assert final.read_bytes() == b"payload"
 
 
+async def test_download_collision_writes_unique_suffix_for_different_content(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(state_dir=tmp_path / "state", require_sso=False)
+    settings.ensure_directories()
+    original = settings.download_dir / "image.png"
+    original.write_bytes(b"first-payload")
+    destination = settings.download_dir / "image.png"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"second-payload")
+
+    client, _ = _client_with_transport(handler, settings)
+    final = await client.download(
+        "https://service.cern.ch/image.png",
+        destination,
+        authenticated=False,
+    )
+    # A genuinely different payload with the same server name gets a suffix;
+    # the original bytes are untouched.
+    assert final == settings.download_dir / "image-1.png"
+    assert final.read_bytes() == b"second-payload"
+    assert original.read_bytes() == b"first-payload"
+
+
+async def test_download_absorbs_identical_content_without_new_file(tmp_path: Path) -> None:
+    settings = Settings(state_dir=tmp_path / "state", require_sso=False)
+    settings.ensure_directories()
+    original = settings.download_dir / "image.png"
+    original.write_bytes(b"same-payload")
+    destination = settings.download_dir / "image.png"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"same-payload")
+
+    client, _ = _client_with_transport(handler, settings)
+    final = await client.download(
+        "https://service.cern.ch/image.png",
+        destination,
+        authenticated=False,
+    )
+    assert final == original
+    assert list(settings.download_dir.glob("image*.png")) == [original]
+    assert final.read_bytes() == b"same-payload"
+
+
+async def test_download_reuses_matching_suffix_slot_and_grows_on_three_versions(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(state_dir=tmp_path / "state", require_sso=False)
+    settings.ensure_directories()
+    (settings.download_dir / "image.png").write_bytes(b"payload-A")
+    (settings.download_dir / "image-1.png").write_bytes(b"payload-B")
+    destination = settings.download_dir / "image.png"
+
+    content = {"A": b"payload-A", "C": b"payload-C"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        variant = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, content=content[variant])
+
+    client, requests = _client_with_transport(handler, settings)
+    again_a = await client.download(
+        "https://service.cern.ch/dl/A", destination, authenticated=False
+    )
+    assert again_a == settings.download_dir / "image.png"
+    version_c = await client.download(
+        "https://service.cern.ch/dl/C", destination, authenticated=False
+    )
+    assert version_c == settings.download_dir / "image-2.png"
+    assert len(requests) == 2
+    assert {p.name for p in settings.download_dir.glob("image*.png")} == {
+        "image.png",
+        "image-1.png",
+        "image-2.png",
+    }
+
+
 async def test_head_large_content_length_is_allowed(tmp_path: Path) -> None:
     settings = Settings(state_dir=tmp_path, require_sso=False, max_response_bytes=1024)
 
@@ -355,3 +433,58 @@ async def test_request_unauthenticated_401_never_warms(
     assert response.status_code == 401
     assert len(requests) == 1
     assert warmed == []
+
+
+async def test_json_post_warms_site_and_retries_once(
+    settings: Settings, valid_storage_state: dict[str, Any], future_epoch: float
+) -> None:
+    """Read-only JSON POST searches self-heal like GETs when a mapped site 401s."""
+    warmed: list[list[str]] = []
+
+    async def site_warmer(
+        _: Settings, _state: dict[str, Any], urls: list[str] | tuple[str, ...]
+    ) -> dict[str, Any]:
+        warmed.append(list(urls))
+        return {
+            "cookies": [
+                *valid_storage_state["cookies"],
+                {
+                    "name": "MMAUTHTOKEN",
+                    "value": "fresh",
+                    "domain": ".mattermost.web.cern.ch",
+                    "path": "/",
+                    "expires": future_epoch,
+                    "secure": True,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                },
+            ],
+            "origins": [],
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "MMAUTHTOKEN" in request.headers.get("Cookie", ""):
+            return httpx.Response(200, json={"order": [], "posts": {}})
+        return httpx.Response(401)
+
+    requests: list[httpx.Request] = []
+
+    def recorder(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return handler(request)
+
+    auth = AuthService(settings, site_warmer=site_warmer)
+    SessionStore(settings.session_path).save(valid_storage_state)
+    client = SafeHttpClient(
+        settings,
+        auth,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(recorder)),
+    )
+    response = await client.request_json_post(
+        "https://mattermost.web.cern.ch/api/v4/teams/1/posts/search",
+        json_body={"terms": "jet"},
+        allowlist=("mattermost.web.cern.ch",),
+    )
+    assert response.status_code == 200
+    assert len(requests) == 2
+    assert warmed == [["https://mattermost.web.cern.ch/oauth/gitlab/login"]]

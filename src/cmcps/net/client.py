@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import ssl
 import time
@@ -23,6 +24,16 @@ _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _CHUNK_SIZE = 64 * 1024
 _DOWNLOAD_MIN_ERROR = 300
 _WARM_RETRY_STATUSES = {401, 403}
+_DUPLICATE_SLOT_LIMIT = 100
+
+
+def _sha256(path: Path) -> str:
+    """Streaming SHA-256 of one file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +284,43 @@ class SafeHttpClient:
             )
         return final
 
+    @staticmethod
+    def _deduped_download_path(final: Path, temporary: Path) -> Path:
+        """Resolve name collisions by content: reuse identical files, suffix distinct ones.
+
+        ``final`` holds the server's name for the payload now sitting in
+        ``temporary``. If a file already occupies that name, compare SHA-256:
+        identical content means the download is a no-op (the existing path is
+        returned); different content lands at ``name-1.ext``/``name-2.ext``/…,
+        reusing any suffix slot that already stores identical content. This
+        way nothing is ever silently overwritten.
+        """
+        if not final.exists():
+            return final
+        downloaded = _sha256(temporary)
+        for index in range(_DUPLICATE_SLOT_LIMIT):
+            candidate = (
+                final if index == 0 else final.with_name(f"{final.stem}-{index}{final.suffix}")
+            )
+            if not candidate.exists():
+                return candidate
+            if _sha256(candidate) == downloaded:
+                return candidate
+        raise PolicyViolationError(
+            f"Too many distinct downloads named {final.name}",
+            instructions="Clean up the CMcpS downloads directory.",
+        )
+
+    def _place_download(self, final: Path, temporary: Path) -> Path:
+        """Install one completed temp download with content-based dedup."""
+        resolved = self._deduped_download_path(final, temporary)
+        if resolved.exists():
+            # Identical content already stored there: absorb.
+            temporary.unlink()
+        else:
+            temporary.replace(resolved)
+        return resolved
+
     async def _post(
         self,
         url: str,
@@ -282,6 +330,7 @@ class SafeHttpClient:
         allowlist: tuple[str, ...],
         headers: dict[str, str] | None,
         authenticated: bool,
+        service_headers: dict[str, str] | None = None,
     ) -> SafeResponse:
         """Shared POST core behind the explicit read-only allowlist gates."""
         target = validate_url(url, allowed_hosts=self.settings.allowed_hosts)
@@ -292,6 +341,8 @@ class SafeHttpClient:
             raise PolicyViolationError(f"POST is restricted to {list(allowlist)}, got {host}")
         for redirects_seen in range(self.settings.max_redirects + 1):
             request_headers: dict[str, str] = dict(validate_headers(headers))
+            if service_headers:
+                request_headers.update(service_headers)
             if cookie := await self._cookie_for(target, authenticated=authenticated):
                 request_headers["Cookie"] = cookie
             try:
@@ -354,27 +405,44 @@ class SafeHttpClient:
         allowlist: tuple[str, ...],
         headers: dict[str, str] | None = None,
         authenticated: bool = True,
+        service_headers: dict[str, str] | None = None,
     ) -> SafeResponse:
         """POST one JSON body to an allowlisted read-only query endpoint.
 
         Some CERN services only expose their search backend as a JSON POST
         (the CERN Service-Now Service-Portal ``/api/now/sp/search`` has no GET
-        equivalent, verified: GET answers 405). Semantics stay read-only: the
-        call issues a query and never mutates state, like the CMS Online form
-        POST and the auth-layer OIDC token-refresh POST. Restrictions: HTTPS +
-        explicit endpoint allowlist + one small JSON object body (no form
-        data, no file upload, no streaming). Everything else the safety layer
+        equivalent, verified: GET answers 405; the Mattermost API v4 post
+        search likewise). Semantics stay read-only: the call issues a query
+        and never mutates state, like the CMS Online form POST and the
+        auth-layer OIDC token-refresh POST. Restrictions: HTTPS + explicit
+        endpoint allowlist + one small JSON object body (no form data, no
+        file upload, no streaming). Everything else the safety layer
         guarantees for GET applies: URL validation, cookie re-scoping on
-        redirects, size limits.
+        redirects, size limits, and one headless warm-retry when a mapped
+        cookie-only site answers 401/403.
         """
-        return await self._post(
+        response = await self._post(
             url,
             form=None,
             json_body=json_body,
             allowlist=allowlist,
             headers=headers,
             authenticated=authenticated,
+            service_headers=service_headers,
         )
+        if response.status_code in _WARM_RETRY_STATUSES and await self._warm_for_host(
+            url, authenticated=authenticated
+        ):
+            response = await self._post(
+                url,
+                form=None,
+                json_body=json_body,
+                allowlist=allowlist,
+                headers=headers,
+                authenticated=authenticated,
+                service_headers=service_headers,
+            )
+        return response
 
     async def download(
         self,
@@ -388,7 +456,11 @@ class SafeHttpClient:
 
         Redirects are followed with per-hop cookie re-scoping, same policy as
         ``request``. ``service_headers`` carries operator-configured credentials
-        (never tool arguments).
+        (never tool arguments). Name collisions are resolved by content: an
+        existing file with identical SHA-256 makes the download a no-op
+        (its path is returned); a genuinely different payload with the same
+        server-supplied name lands at ``name-1.ext``/``name-2.ext``/… —
+        bytes already stored are never silently overwritten.
         """
         validate_method("GET")
         self.settings.ensure_directories()
@@ -434,8 +506,7 @@ class SafeHttpClient:
                                         f"{self.settings.max_download_bytes} byte limit"
                                     )
                                 handle.write(chunk)
-                        temporary.replace(final)
-                        return final
+                        return self._place_download(final, temporary)
                 raise PolicyViolationError("Redirect handling exceeded its policy bound")
             finally:
                 if temporary.exists():

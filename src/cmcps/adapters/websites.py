@@ -245,8 +245,7 @@ def _read_meta(db_path: Path) -> dict[str, str]:
         con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
             return {
-                str(key): str(value)
-                for key, value in con.execute("SELECT key, value FROM meta")
+                str(key): str(value) for key, value in con.execute("SELECT key, value FROM meta")
             }
         finally:
             con.close()
@@ -319,8 +318,7 @@ def _search_db(
         if tokens:
             if fts5:
                 select_from = (
-                    "FROM site_fts JOIN site s ON s.rowid = site_fts.rowid "
-                    "WHERE site_fts MATCH ?"
+                    "FROM site_fts JOIN site s ON s.rowid = site_fts.rowid WHERE site_fts MATCH ?"
                 )
                 match_params: list[Any] = [_fts_query(tokens)]
             else:
@@ -335,9 +333,7 @@ def _search_db(
             select_from = "FROM site s WHERE 1=1"
             match_params = []
         all_params = [*match_params, *params]
-        total = con.execute(
-            f"SELECT count(*) {select_from}{extra}", all_params
-        ).fetchone()[0]
+        total = con.execute(f"SELECT count(*) {select_from}{extra}", all_params).fetchone()[0]
         rows = con.execute(
             f"SELECT {', '.join('s.' + col for col in _SITE_COLUMNS)} {select_from}{extra} "
             f"ORDER BY {order} LIMIT ? OFFSET ?",
@@ -365,8 +361,10 @@ async def _do_refresh(client: SafeHttpClient, settings: Settings) -> dict[str, A
     wsp_records = wsp_result
     ctlog_note: str | None = None
     if isinstance(ctlog_result, BaseException):
-        detail = ctlog_result.message if isinstance(ctlog_result, UpstreamError) else (
-            str(ctlog_result) or type(ctlog_result).__name__
+        detail = (
+            ctlog_result.message
+            if isinstance(ctlog_result, UpstreamError)
+            else (str(ctlog_result) or type(ctlog_result).__name__)
         )
         ctlog_note = f"crt.sh source skipped: {detail}"
         ctlog_records: list[dict[str, Any]] = []
@@ -564,13 +562,15 @@ async def search(
     return result
 
 
-async def lookup(
-    client: SafeHttpClient, settings: Settings, *, hostname: str
-) -> dict[str, Any]:
+async def lookup(client: SafeHttpClient, settings: Settings, *, hostname: str) -> dict[str, Any]:
     """Exact record(s) for one hosted website hostname."""
     cleaned = (
-        hostname.strip().lower().removeprefix("https://").removeprefix("http://")
-        .split("/")[0].split(":")[0]
+        hostname.strip()
+        .lower()
+        .removeprefix("https://")
+        .removeprefix("http://")
+        .split("/")[0]
+        .split(":")[0]
     )
     if not cleaned or not _HOSTNAME_RE.fullmatch(cleaned):
         raise InvalidInputError(

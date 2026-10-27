@@ -330,8 +330,8 @@ def _iter_attachments(container: dict[str, Any]) -> Any:
 
 
 def _attachment_entry(
-    settings: Settings,
-    event_id: str,
+    _settings: Settings,
+    _event_id: str,
     *,
     folder: dict[str, Any],
     attachment: dict[str, Any],

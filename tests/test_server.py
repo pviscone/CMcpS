@@ -136,6 +136,17 @@ JIRA_TOOLS = {
     "jira_get_issue",
     "jira_get_project",
 }
+MATTERMOST_TOOLS = {
+    "mattermost_get_me",
+    "mattermost_get_user",
+    "mattermost_list_teams",
+    "mattermost_list_channels",
+    "mattermost_get_channel",
+    "mattermost_search_posts",
+    "mattermost_get_posts",
+    "mattermost_get_thread",
+    "mattermost_download_file",
+}
 CMSONLINE_TOOLS = {
     "cmsonline_get_version",
     "cmsonline_list_runs",
@@ -210,6 +221,7 @@ ALL_TOOLS = (
     | TWIKI_TOOLS
     | CMSONLINE_TOOLS
     | JIRA_TOOLS
+    | MATTERMOST_TOOLS
     | MCM_TOOLS
     | DAS_TOOLS
     | GOCMS_TOOLS
@@ -293,6 +305,15 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "jira_search": {"jql": "project = CMSTRACK"},
     "jira_get_issue": {"issue_key": "CMSTRACK-1"},
     "jira_get_project": {"project_key": "CMSTRACK"},
+    "mattermost_get_me": {},
+    "mattermost_get_user": {"username": "pviscone"},
+    "mattermost_list_teams": {},
+    "mattermost_list_channels": {"team_id": "t" * 26},
+    "mattermost_get_channel": {"channel_id": "c" * 26},
+    "mattermost_search_posts": {"team_id": "t" * 26, "terms": "jet"},
+    "mattermost_get_posts": {"channel_id": "c" * 26},
+    "mattermost_get_thread": {"post_id": "p" * 26},
+    "mattermost_download_file": {"file_id": "f" * 26},
     # das_search / das_get_dataset_info are intentionally absent: they are not
     # SSO-gated (grid client-certificate auth via dasgoclient). The mcm_*
     # tools are also absent: McM's public REST API is anonymous (no SSO).

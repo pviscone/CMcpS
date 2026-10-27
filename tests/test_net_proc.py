@@ -20,9 +20,7 @@ async def test_captures_output_and_exit_code() -> None:
 
 
 async def test_nonzero_exit_and_stderr_passthrough() -> None:
-    result = await run_command(
-        [PY, "-c", "import sys; sys.stderr.write('bad'); sys.exit(3)"]
-    )
+    result = await run_command([PY, "-c", "import sys; sys.stderr.write('bad'); sys.exit(3)"])
     assert result.exit_code == 3
     assert result.stderr == b"bad"
 

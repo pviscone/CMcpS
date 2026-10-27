@@ -100,6 +100,7 @@ async def test_search_ql_error_maps_invalid_input() -> None:
 
 async def test_search_validation_error_on_stdout_maps_invalid_input() -> None:
     """dasgoclient emits pattern validation errors on stdout (exit 18), not stderr."""
+
     async def run(_argv: Sequence[str]) -> CommandResult:
         return CommandResult(
             exit_code=18, stdout=b"Validation error: unmatched dataset pattern", stderr=b""

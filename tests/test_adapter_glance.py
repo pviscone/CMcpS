@@ -700,9 +700,7 @@ async def test_download_attachment_unknown_filename_rejected(tmp_path: Path) -> 
             client, settings, analysis="HIG-23-004", filename="HIG-23-004-paper-v99.pdf"
         )
     assert "glance_get_analysis" in (caught.value.instructions or "")
-    assert all(
-        request.url.host != "cms-alcm.web.cern.ch" for request in recorder.requests
-    )
+    assert all(request.url.host != "cms-alcm.web.cern.ch" for request in recorder.requests)
 
 
 async def test_download_attachment_rejects_traversal_filename(tmp_path: Path) -> None:

@@ -26,6 +26,7 @@ from cmcps.tools.hypernews import register_hypernews_tools
 from cmcps.tools.indico import register_indico_tools
 from cmcps.tools.inspire import register_inspire_tools
 from cmcps.tools.jira import register_jira_tools
+from cmcps.tools.mattermost import register_mattermost_tools
 from cmcps.tools.mcm import register_mcm_tools
 from cmcps.tools.mkdocs import register_mkdocs_tools
 from cmcps.tools.pdftools import register_pdftools_tools
@@ -50,6 +51,7 @@ def register_adapter_tools(
     register_cmsresults_tools(server, settings, auth, http)
     register_cmsonline_tools(server, settings, auth, http)
     register_jira_tools(server, settings, auth, http)
+    register_mattermost_tools(server, settings, auth, http)
     register_mcm_tools(server, settings, http)
     register_das_tools(server, settings)
     register_gocms_tools(server, settings, auth, http)

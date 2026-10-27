@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     websites_token: str | None = None
     websites_ctlog_url: str = "https://crt.sh/"
     websites_cache_max_age_days: int = Field(default=30, ge=1, le=365)
+    # Mattermost (mattermost.web.cern.ch, stock API v4): authenticates with the
+    # MMAUTHTOKEN session cookie minted by the oauth/gitlab/login SSO handshake
+    # (mm-auth.web.cern.ch brokers to auth.cern.ch; warmed lazily by the shared
+    # client). Optional personal access token fallback (Authorization: Bearer).
+    mattermost_base_url: str = "https://mattermost.web.cern.ch"
+    mattermost_token: str | None = None
     # DAS: serviced by the dasgoclient CLI (GSI client-certificate auth), not
     # by the SSO-cookie HTTP client. cert/key default to ~/.globus.
     dasgoclient_path: str | None = Field(default_factory=_default_dasgoclient)

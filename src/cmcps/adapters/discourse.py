@@ -59,6 +59,7 @@ def _guard_session(response: SafeResponse, *, site: str) -> None:
             "the stored SSO state has no (expired) Discourse session cookies"
         )
 
+
 _LISTINGS = ("latest", "top")
 _TOP_PERIODS = ("all", "yearly", "quarterly", "monthly", "weekly", "daily")
 _UPLOAD_RE = re.compile(r'(?:href|src)="([^"]*/uploads/[^"]+)"')

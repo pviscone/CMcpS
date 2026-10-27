@@ -147,7 +147,7 @@ def _check_exit(result: CommandResult) -> None:
     # dasgoclient writes QL parse errors to stderr (exit 17) but pattern
     # validation errors to stdout (exit 18); scan both.
     output = stderr + result.stdout.decode(errors="replace")
-    detail = (stderr.strip() or output.strip())
+    detail = stderr.strip() or output.strip()
     detail = detail.splitlines()[0][:200] if detail else f"exit code {result.exit_code}"
     if any(marker in output for marker in _QL_ERROR_MARKERS):
         raise InvalidInputError(

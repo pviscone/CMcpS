@@ -47,11 +47,23 @@ async def test_cmsoms_session_ready_requires_openidc_cookie() -> None:
     assert await browser._cmsoms_session_ready(_FakeContext({})) is False
 
 
+async def test_mattermost_session_ready_requires_mmathtoken() -> None:
+    logged_in = _FakeContext(
+        {"https://mattermost.web.cern.ch": [{"name": "MMAUTHTOKEN", "value": "s"}]}
+    )
+    anonymous = _FakeContext(
+        {"https://mattermost.web.cern.ch": [{"name": "MMOAUTH", "value": "transient"}]}
+    )
+    assert await browser._mattermost_session_ready(logged_in) is True
+    assert await browser._mattermost_session_ready(anonymous) is False
+
+
 def test_cookie_only_sites_cover_restricted_hosts() -> None:
     urls = {url for url, _, _ in browser._COOKIE_ONLY_SITES}
     assert "https://cds.cern.ch/youraccount/login?ln=en" in urls
     assert "https://cms-alcm.web.cern.ch/" in urls
     assert "https://cmsoms.cern.ch/" in urls
+    assert "https://mattermost.web.cern.ch/oauth/gitlab/login" in urls
 
 
 def test_cookie_site_url_for_host_reverse_map() -> None:
@@ -60,6 +72,10 @@ def test_cookie_site_url_for_host_reverse_map() -> None:
         == "https://its.cern.ch/jira/login.jsp?os_destination=%2Fsecure%2FDashboard.jspa"
     )
     assert browser.cookie_site_url_for_host("cmsoms.cern.ch") == "https://cmsoms.cern.ch/"
+    assert (
+        browser.cookie_site_url_for_host("mattermost.web.cern.ch")
+        == "https://mattermost.web.cern.ch/oauth/gitlab/login"
+    )
     assert browser.cookie_site_url_for_host("gitlab.cern.ch") is None
 
 

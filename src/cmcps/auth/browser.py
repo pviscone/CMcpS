@@ -303,6 +303,21 @@ async def _cmsoms_session_ready(context: BrowserContext) -> bool:
     return any(cookie.get("name") == "mod_auth_openidc_session" for cookie in cookies)
 
 
+async def _mattermost_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds a logged-in Mattermost session.
+
+    CERN Mattermost (mattermost.web.cern.ch) logs in through its
+    ``/oauth/gitlab/login`` route, which chains mm-auth.web.cern.ch →
+    auth.cern.ch; inside an SSO context that handshake is silent and drops
+    the ``MMAUTHTOKEN`` session cookie the API v4 accepts.
+    """
+    try:
+        cookies = await context.cookies("https://mattermost.web.cern.ch")
+    except PlaywrightError:
+        return False
+    return any(cookie.get("name") == "MMAUTHTOKEN" for cookie in cookies)
+
+
 # The TWiki entry visits the viewauth script so the SSO handshake drops the
 # twiki.cern.ch session cookie used by scripts that gate on login (protected
 # attachment downloads); page content itself is served anonymously.
@@ -311,6 +326,10 @@ async def _cmsoms_session_ready(context: BrowserContext) -> bool:
 # notes) downloaded via the ALCM "cernbox" link pattern.
 # The CMS OMS entry is needed for the cmsonline_* run/fill/lumi tools: the
 # OMS API rejects requests without its own mod_auth_openidc session.
+# The Mattermost entry starts at its oauth/gitlab/login route (the web-app
+# login button target): unauthenticated visitors of / only get an SPA login
+# page with a click-through button, while the OAuth route walks straight
+# through mm-auth.web.cern.ch → auth.cern.ch and drops MMAUTHTOKEN.
 _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], ...] = (
     ("https://cms-talk.web.cern.ch", None, None),
     ("https://cms-pub-talk.web.cern.ch", None, None),
@@ -320,6 +339,11 @@ _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], 
     ("https://cms-alcm.web.cern.ch/", None, _cms_alcm_session_ready),
     (SERVICENOW_SITE_URL, None, _servicenow_session_ready),
     ("https://cmsoms.cern.ch/", None, _cmsoms_session_ready),
+    (
+        "https://mattermost.web.cern.ch/oauth/gitlab/login",
+        None,
+        _mattermost_session_ready,
+    ),
 )
 
 

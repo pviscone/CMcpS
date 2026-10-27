@@ -196,6 +196,29 @@ a public-only `note`.
 - `jira_get_issue` — full issue by key: description, comments, attachments, people, dates.
 - `jira_get_project` — project metadata (lead, components, issue types).
 
+## CERN Mattermost tools (mattermost.web.cern.ch)
+
+Stock Mattermost REST API v4 (CERN fork, observed 11.7.x); every endpoint is
+login-required (anonymous calls answer JSON `401`). Authentication is the
+`MMAUTHTOKEN` session cookie minted by the OAuth handshake at
+`/oauth/gitlab/login` (mm-auth.web.cern.ch brokers to auth.cern.ch, so it
+completes silently against the stored SSO identity): the shared client warms
+and retries it headlessly. `CMCPS_MATTERMOST_TOKEN` (a Mattermost personal
+access token from your profile → Security → Personal Access Tokens) is an
+optional `Authorization: Bearer` fallback, injected only by the trusted HTTP
+layer. All listings take a required `team_id`/ids from earlier results; every
+timestamp is converted to ISO-8601.
+
+- `mattermost_get_me` — the user the session/PAT authenticates as (also the auth probe).
+- `mattermost_get_user` — user profile by exact `username` or `user_id` (email may be hidden by privacy config).
+- `mattermost_list_teams` — teams you are a member of (team_id, URL name, type), full list in one call (the CERN fork offers no paging).
+- `mattermost_list_channels` — channels of one team (`O` public / `P` private), full list, optional `name_contains` filter. The CERN endpoint is unpaged and account-wide; direct/group conversations are filtered out client-side.
+- `mattermost_get_channel` — one channel by `channel_id`, or `team_id` + exact `channel_name`.
+- `mattermost_search_posts` — full-text post search in one team (`from:`/`in:`/`before:`/`after:`/`on:` filters, `is_or_search`), newest first with permalinks. The backend exposes no hit count and clamps results to ~100 hits with its own page size; advance `page` until an empty/short page. The only non-GET call (documented read-only search POST, allowlisted; cookie-auth requires `X-Requested-With: XMLHttpRequest`, sent automatically).
+- `mattermost_get_posts` — channel history, newest first; page with `page` or exact post-id cursors (`before=<id of the last post of this page>` for the next older page — `has_more` says whether one exists — `after=<id of the first post>` for newer history; `prev_post_id`/`next_post_id` returned as the boundary indicators).
+- `mattermost_get_thread` — a post and all its replies, oldest first.
+- `mattermost_download_file` — bounded download of one file attachment by `file_id` into local storage (server filename sanitized).
+
 ## McM tools (cms-PdmV, cms-pdmv-prod.web.cern.ch)
 
 McM's own **public REST API index** (`/mcm/public/restapi/`) requires no SSO. Full-text search is SSO-only and not exposed; ids come from the caller.
@@ -391,6 +414,8 @@ Configuration uses environment variables with the `CMCPS_` prefix. Common settin
 | `CMCPS_CDS_BASE_URL` | `https://cds.cern.ch` | CDS instance |
 | `CMCPS_WEBSITES_TOKEN` | unset | Optional Web Services portal Bearer token (normally minted headlessly from SSO) |
 | `CMCPS_WEBSITES_CACHE_MAX_AGE_DAYS` | `30` | Inventory cache age after which searches auto-refresh |
+| `CMCPS_MATTERMOST_BASE_URL` | `https://mattermost.web.cern.ch` | CERN Mattermost instance |
+| `CMCPS_MATTERMOST_TOKEN` | unset | Optional Mattermost personal access token (normally the SSO-minted `MMAUTHTOKEN` cookie is used) |
 
 Service tokens come only from these namespaced environment variables and are injected by the trusted HTTP layer; they are never accepted as tool arguments, mixed into unrelated origins, or written to logs.
 
@@ -401,12 +426,12 @@ The session store and its state directory are written with owner-only permission
 ## Safety model
 
 - MCP tools are read-only by design.
-- The shared HTTP layer accepts only `GET` and `HEAD` requests.
+- The shared HTTP layer accepts only `GET` and `HEAD` requests, plus an explicit, host-allowlisted set of read-only JSON/form POST *query* endpoints (ServiceNow portal search, CMS Online portlet forms, Mattermost post search); mutating methods remain rejected.
 - Requests are constrained to configured host allowlists.
 - Authenticated cookies are injected only after RFC 6265 host-only/domain and path-boundary checks.
 - Saved browser state is minimized to allowlisted cookies; localStorage origins are never persisted.
 - Redirects are bounded and checked again before following.
-- Response and download sizes are bounded; downloads stay inside CMcpS state storage.
+- Response and download sizes are bounded; downloads stay inside CMcpS state storage. Download name collisions are resolved by content (SHA-256): identical payloads reuse the existing file, distinct payloads get a `name-1.ext`-style unique suffix — nothing is silently overwritten.
 - Secrets, absolute credential paths, and session payloads are excluded from logs, errors, and tool results.
 
 ## Tests
