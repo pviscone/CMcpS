@@ -93,9 +93,9 @@ TYPES_PAYLOAD = [
 
 USER_PAYLOAD = {
     "uic": 77175,
-    "username": "dpinillo",
-    "email": "daniel.pinillos.diaz@cern.ch",
-    "edmsDisplayName": "DANIEL PINILLOS DIAZ",
+    "username": "jdoe",
+    "email": "jdoe@example.com",
+    "edmsDisplayName": "JANE DOE",
 }
 
 FILE_BYTES = b"%PDF-1.4 fake edms bytes\n"
@@ -352,7 +352,7 @@ async def test_get_current_user(tmp_path: Path) -> None:
     result = await edms.get_current_user(client)
 
     assert result["source"] == "edms"
-    assert result["username"] == "dpinillo"
+    assert result["username"] == "jdoe"
     assert result["uic"] == 77175
 
 

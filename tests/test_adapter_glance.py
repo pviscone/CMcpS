@@ -197,12 +197,12 @@ async def test_alcm_user_injects_bearer_and_url(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers.get("authorization") == f"Bearer {ALCM_TOKEN}"
         assert request.url.path == "/alcm/api/user"
-        return httpx.Response(200, json={"user": {"username": "pviscone"}})
+        return httpx.Response(200, json={"user": {"username": "jdoe"}})
 
     recorder = Recorder(handler)
     settings, client = make_client(tmp_path, recorder)
     result = await glance.alcm_user(client, settings)
-    assert result["user"]["username"] == "pviscone"
+    assert result["user"]["username"] == "jdoe"
     assert result["app"] == "alcm"
 
 

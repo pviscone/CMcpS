@@ -33,12 +33,12 @@ USER_DOC = {
     "create_at": 1_600_000_000_000,
     "update_at": 1_610_000_000_000,
     "delete_at": 0,
-    "username": "pviscone",
+    "username": "jdoe",
     "auth_service": "gitlab",
-    "email": "piero@example.com",
-    "nickname": "Piero",
-    "first_name": "Piero",
-    "last_name": "Viscone",
+    "email": "jdoe@example.com",
+    "nickname": "Jane",
+    "first_name": "Jane",
+    "last_name": "Doe",
     "position": "Physicist",
     "roles": "system_user",
 }
@@ -162,8 +162,8 @@ async def test_get_me_shape(tmp_path: Path) -> None:
     result = await mattermost.get_me(client, client.settings)
     assert result["source"] == "mattermost"
     assert result["user_id"] == USER_ID
-    assert result["username"] == "pviscone"
-    assert result["email"] == "piero@example.com"
+    assert result["username"] == "jdoe"
+    assert result["email"] == "jdoe@example.com"
     assert result["created_at"] == "2020-09-13T12:26:40Z"
 
 
@@ -199,23 +199,23 @@ async def test_403_is_permission_error_not_auth_required(tmp_path: Path) -> None
 async def test_get_user_modes(tmp_path: Path) -> None:
     router = Router()
     router.add(
-        "GET", "/api/v4/users/username/pviscone", lambda _r: httpx.Response(200, json=USER_DOC)
+        "GET", "/api/v4/users/username/jdoe", lambda _r: httpx.Response(200, json=USER_DOC)
     )
     router.add("GET", f"/api/v4/users/{USER_ID}", lambda _r: httpx.Response(200, json=USER_DOC))
     client = make_client(tmp_path, router)
 
-    by_name = await mattermost.get_user(client, client.settings, username="pviscone")
+    by_name = await mattermost.get_user(client, client.settings, username="jdoe")
     by_id = await mattermost.get_user(client, client.settings, user_id=USER_ID)
-    assert by_name["username"] == by_id["username"] == "pviscone"
+    assert by_name["username"] == by_id["username"] == "jdoe"
     assert [r.url.path for r in router.requests] == [
-        "/api/v4/users/username/pviscone",
+        "/api/v4/users/username/jdoe",
         f"/api/v4/users/{USER_ID}",
     ]
 
     with pytest.raises(InvalidInputError):
         await mattermost.get_user(client, client.settings)
     with pytest.raises(InvalidInputError):
-        await mattermost.get_user(client, client.settings, username="pviscone", user_id=USER_ID)
+        await mattermost.get_user(client, client.settings, username="jdoe", user_id=USER_ID)
     with pytest.raises(InvalidInputError):
         await mattermost.get_user(client, client.settings, user_id="not-an-id")
     assert len(router.requests) == 2
