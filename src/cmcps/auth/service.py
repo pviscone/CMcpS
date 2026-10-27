@@ -10,9 +10,12 @@ from datetime import datetime
 from typing import Any
 
 from cmcps.auth.browser import (
+    FETCH_DEFAULT_TIMEOUT_SECONDS,
     PortalInteract,
-    collect_sso_state,
+    capture_bearer_service,
+    collect_sso_identity,
     extract_local_storage_value,
+    fetch_page_text,
     render_page_html,
     warm_cookie_sites,
 )
@@ -20,6 +23,7 @@ from cmcps.auth.store import SessionRecord, SessionStore, minimize_storage_state
 from cmcps.auth.tokens import (
     BEARER_SERVICE_EXCHANGE_AUDIENCES,
     BEARER_SERVICES,
+    ServiceTokenRecord,
     ServiceTokenStore,
     exchange_for_audience,
     parse_token_exchange,
@@ -55,6 +59,14 @@ SiteWarmer = Callable[
 LocalStorageExtractor = Callable[
     [Settings, dict[str, Any], str, str],
     Awaitable["tuple[str, dict[str, Any]] | None"],
+]
+PageFetcher = Callable[
+    [Settings, dict[str, Any], str, str | None, int],
+    Awaitable["tuple[dict[str, Any], dict[str, Any]] | None"],
+]
+BearerServiceCaptor = Callable[
+    [Settings, dict[str, Any], str],
+    Awaitable["dict[str, Any] | None"],
 ]
 
 SIGN_IN_FIRST = "Call cern_auth_sign_in and complete the CERN browser login."
@@ -97,10 +109,12 @@ class AuthService:
         settings: Settings,
         *,
         store: SessionStore | None = None,
-        collector: StorageStateCollector = collect_sso_state,
+        collector: StorageStateCollector = collect_sso_identity,
         page_renderer: PageRenderer = render_page_html,
         site_warmer: SiteWarmer = warm_cookie_sites,
         storage_extractor: LocalStorageExtractor = extract_local_storage_value,
+        page_fetcher: PageFetcher = fetch_page_text,
+        bearer_captor: BearerServiceCaptor = capture_bearer_service,
     ) -> None:
         self.settings = settings
         self.store = store or SessionStore(settings.session_path)
@@ -108,6 +122,8 @@ class AuthService:
         self.page_renderer = page_renderer
         self.site_warmer = site_warmer
         self.storage_extractor = storage_extractor
+        self.page_fetcher = page_fetcher
+        self.bearer_captor = bearer_captor
 
     @property
     def identity_host(self) -> str:
@@ -198,7 +214,7 @@ class AuthService:
         )
 
     async def sign_in(self, timeout_seconds: int | None = None) -> SignInResult:
-        """Run the visible-browser login and persist its minimized cookie state."""
+        """Run the visible login; service credentials are minted lazily on use."""
         timeout = self._validated_timeout(timeout_seconds)
         if not host_matches(self.identity_host, self.settings.allowed_hosts):
             raise InvalidInputError(
@@ -227,7 +243,6 @@ class AuthService:
         storage_state = await self.collector(self.settings, timeout)
         if not storage_state:
             raise InvalidSessionError("The browser did not produce a storage state")
-        service_exchanges = storage_state.pop("service_tokens", {}) or {}
         minimized_state = minimize_storage_state(storage_state, self.settings.allowed_hosts)
         record = self.store.save(minimized_state)
         identity = self._identity_cookie(record)
@@ -236,18 +251,16 @@ class AuthService:
                 "The browser finished without the configured CERN identity cookie",
                 instructions="Complete the CERN SSO login and retry cern_auth_sign_in.",
             )
-        captured_services = self._persist_service_tokens(service_exchanges)
-        if captured_services:
-            note = f" Captured Bearer tokens for: {', '.join(captured_services)}."
-        else:
-            note = ""
+        # Nothing else happens here on purpose: per-service Bearer tokens are
+        # minted lazily on first API use, and cookie-only site sessions are
+        # re-warmed on demand — no visible tab parade after login.
         return SignInResult(
             authenticated=True,
             state_file=self.settings.session_path.name,
             identity_cookie_name=str(identity["name"]),
             expires_at=self._identity_expiry(record),
             cookie_count=len(record.cookies),
-            message="CERN SSO completed and the local session was stored." + note,
+            message="CERN SSO completed and the local session was stored.",
         )
 
     async def reauthenticate(self, timeout_seconds: int | None = None) -> SignInResult:
@@ -331,6 +344,54 @@ class AuthService:
         self.store.save(minimized)
         return value
 
+    async def fetch_page(
+        self,
+        url: str,
+        *,
+        wait_for: str | None = None,
+        timeout_seconds: int | None = None,
+        max_chars: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Render one SSO-protected page headlessly and return its visible text.
+
+        Browser-level fallback for pages a plain HTTP GET cannot authenticate:
+        cookie-backed sites and Keycloak-PKCE SPAs whose token exchange
+        completes silently against the stored identity. Persists the refreshed
+        cookie jar. Returns the fetcher payload (``url``, ``final_url``,
+        ``title``, ``text``, ``marker_found``, ``auth_divert``, plus
+        ``truncated``) or ``None`` when SSO is bypassed, the session is
+        missing/expired, the URL is not allowlisted, or the page failed to
+        load.
+        """
+        record = self._authenticated_record(url)
+        if record is None:
+            return None
+        timeout = (
+            timeout_seconds if timeout_seconds is not None else (FETCH_DEFAULT_TIMEOUT_SECONDS)
+        )
+        try:
+            fetched = await self.page_fetcher(
+                self.settings,
+                record.storage_state,
+                url,
+                wait_for,
+                timeout,
+            )
+        except BrowserUnavailableError:
+            logger.debug("Fetch-page skipped; no browser available for %s", url)
+            return None
+        if not fetched:
+            return None
+        payload, refreshed_state = fetched
+        minimized = minimize_storage_state(refreshed_state, self.settings.allowed_hosts)
+        self.store.save(minimized)
+        text = str(payload.get("text") or "")
+        truncated = max_chars is not None and len(text) > max_chars
+        if truncated:
+            payload["text"] = text[:max_chars]
+        payload["truncated"] = truncated
+        return payload
+
     def _authenticated_record(self, url: str) -> SessionRecord | None:
         """Return the stored session when SSO is active, the URL allowlisted, and identity fresh."""
         if not self.settings.require_sso:
@@ -348,6 +409,37 @@ class AuthService:
         ):
             return None
         return record
+
+    async def _mint_service_token(self, service: str) -> ServiceTokenRecord | None:
+        """Mint one service's Bearer tokens headlessly on first demand.
+
+        Lazy capture: re-opens the service app against the stored identity
+        and intercepts its own Keycloak exchange. ``None`` when there is no
+        valid session, no browser is available, or the app produced no
+        interceptable exchange.
+        """
+        try:
+            session = self.store.load()
+        except SessionStoreError:
+            logger.debug("Lazy Bearer mint skipped for %s: session unreadable", service)
+            return None
+        if session is None or not session.is_authenticated(
+            self.settings.identity_cookie_names,
+            identity_host=self.identity_host,
+            max_session_age_seconds=self.settings.session_max_age_seconds,
+        ):
+            return None
+        try:
+            exchange = await self.bearer_captor(self.settings, session.storage_state, service)
+        except BrowserUnavailableError:
+            logger.debug("Lazy Bearer mint skipped for %s: no browser available", service)
+            return None
+        if exchange is None:
+            return None
+        persisted = self._persist_service_tokens({service: exchange})
+        if service not in persisted:
+            return None
+        return self.service_token_store().load(service)
 
     def _persist_service_tokens(self, exchanges: dict[str, Any]) -> list[str]:
         """Parse intercepted token responses and store them; best effort."""
@@ -388,6 +480,8 @@ class AuthService:
                 instructions=f"Known services: {', '.join(BEARER_SERVICES)}.",
             )
         record = self.service_token_store().load(service)
+        if record is None:
+            record = await self._mint_service_token(service)
         if record is None:
             return None
         if record.access_valid():

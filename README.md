@@ -59,10 +59,11 @@ Note: `uvx --from <local dir>` caches the built wheel per package *version*; sou
 
 ## Auth and bootstrap tools
 
-- `cern_auth_sign_in` — opens a visible browser at the CERN account page, waits for an authenticated Keycloak identity cookie, and stores only allowlisted cookies locally. No localStorage, cookie, or token values are returned to the MCP client.
+- `cern_auth_sign_in` — opens a visible browser at the CERN account page, waits for an authenticated Keycloak identity cookie, and stores only allowlisted cookies locally. Only the login itself is visible: per-service Bearer tokens are minted lazily on first API use and cookie-only site sessions are re-warmed on demand from the stored identity. No localStorage, cookie, or token values are returned to the MCP client.
 - `cern_auth_status` — reports whether a usable session is stored, its expiry when known, and safe metadata such as the credential filename. Call this first when troubleshooting authentication.
 - `cern_auth_reauthenticate` — discards the stored session cookies and captured service Bearer tokens, then runs a fresh visible-browser sign-in. Use when `cern_auth_sign_in` keeps reusing a broken session.
 - `cern_health` — protected smoke tool proving the authentication guard, read-only safety policy, and server wiring after sign-in.
+- `cern_fetch_page` — renders one SSO-protected page in a headless browser through the stored session and returns its visible text. Covers cookie-based sites and Keycloak-PKCE single-page apps whose token exchange completes silently (plain GET-based tools cannot read either). `wait_for` waits for a case-insensitive substring before returning (use for SPA content); `auth_divert=true` in the result means the page landed on the SSO login and the stored session needs a fresh `cern_auth_sign_in`.
 
 MCP does not guarantee client-side call order, so CMcpS enforces authentication server-side. Every adapter tool returns a structured `AUTH_REQUIRED` result until `cern_auth_sign_in` completes.
 
@@ -245,11 +246,11 @@ Custom JSON API v0 (routes recovered from the service frontend bundle; see [docs
 
 Credential resolution (first match wins):
 
-1. The `cern_auth_sign_in` browser flow opens the HLT app in the same authenticated context and **captures the Keycloak token exchange** (access + refresh token, client id, token endpoint), stored in `cern-service-tokens.json` (0600). Expired tokens are refreshed silently via `grant_type=refresh_token`; no browser needed until the refresh token dies.
+1. On first use the HLT app root is re-opened **headlessly** against the stored SSO session and its Keycloak token exchange captured (access + refresh token, client id, token endpoint), stored in `cern-service-tokens.json` (0600). Expired tokens are refreshed silently via `grant_type=refresh_token`; no browser needed until the refresh token dies.
 2. Fallback: `CMCPS_HLTINFO_TOKEN` manually set to a valid token.
 
 - `hltinfo_list_menus` — HLT menus known to the service.
-- `hltinfo_get_path_summary` — per-year path summary table.
+- `hltinfo_get_path_summary` — per-year path summary as file + metadata: rows (per-path lumi counts, datasets, run spans) are written to CMcpS download storage, the result carries years/counts/truncation and the file path only; optional `year` and `pathname_contains` filters.
 - `hltinfo_get_path_names` — path names, optional simple filter.
 - `hltinfo_get_path` — full path record (versions, filters, per-run data).
 - `hltinfo_get_path_prescales` — prescale values over a run range.
@@ -271,7 +272,7 @@ GLANCE exposes separate Keycloak **Bearer-only** APIs per application — browse
 - **ALCM** (CADI/analysis-note registry, audience `cms-alcm-api-prod`)
 - **Membership** (audience `cms-membership-api-prod`)
 
-`cern_auth_sign_in` loads each app root during sign-in and **captures its token exchange** (same mechanism as the HLT info token capture); expiring access tokens refresh silently. Manual fallbacks: `CMCPS_GLANCE_ALCM_TOKEN` / `CMCPS_GLANCE_MEMBERSHIP_TOKEN`. If sign-in dates from before this feature existed, re-run it to capture the new audiences.
+Tokens are **minted lazily on first API use**: the call re-opens the app root headlessly against the stored SSO session and captures its token exchange (same mechanism as the HLT info token capture); expiring access tokens refresh silently afterwards. Manual fallbacks: `CMCPS_GLANCE_ALCM_TOKEN` / `CMCPS_GLANCE_MEMBERSHIP_TOKEN`.
 
 - `glance_alcm_user`, `glance_membership_user` — current user record in each app.
 - `glance_search_analyses` — analysis search with the same fields as the ALCM analysis page (`custom`, `code`, `title`, `stage`, `working_group`, `contacts`, `start_date`/`end_date` on registration date, `sort_by`/`sort_order`); the API has no server search, so filters run client-side over the full list, paginated.

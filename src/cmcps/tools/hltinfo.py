@@ -42,11 +42,35 @@ def register_hltinfo_tools(
 
     @server.tool(
         name="hltinfo_get_path_summary",
-        description=("Per-year HLT path summary table. " + _AUTH_DOC),
+        description=(
+            "Per-year HLT path summary (per-path lumi counts, datasets, run "
+            "spans). Rows are never returned inline — the raw table is ~8 MB; "
+            "the bounded JSON is written to CMcpS download storage and the "
+            "result carries only years, per-year counts, truncation info, and "
+            "the file path. Optional year filter (default latest 5) and "
+            "case-insensitive pathname_contains filter. " + _AUTH_DOC
+        ),
     )
-    async def hltinfo_get_path_summary() -> ToolEnvelope:
-        """Path summary."""
-        return await guarded(auth, lambda: hltinfo.get_path_summary(http, settings))
+    async def hltinfo_get_path_summary(
+        year: Annotated[
+            int | None,
+            Field(description="Restrict to one year (e.g. 2025); default: latest 5."),
+        ] = None,
+        pathname_contains: Annotated[
+            str | None,
+            Field(
+                description="Case-insensitive path-name substring filter applied "
+                "before writing the file, e.g. Ele, Mu, Tau."
+            ),
+        ] = None,
+    ) -> ToolEnvelope:
+        """Path summary (file + metadata)."""
+        return await guarded(
+            auth,
+            lambda: hltinfo.get_path_summary(
+                http, settings, year=year, pathname_contains=pathname_contains
+            ),
+        )
 
     @server.tool(
         name="hltinfo_get_path_names",

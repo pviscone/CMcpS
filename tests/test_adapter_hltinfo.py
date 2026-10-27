@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -91,7 +92,37 @@ async def test_get_path_summary(tmp_path: Path) -> None:
     recorder = Recorder(lambda _r: httpx.Response(200, json=payload))
     settings, client = make_client(tmp_path, recorder)
     result = await hltinfo.get_path_summary(client, settings)
-    assert "2024" in result["result"]
+    assert "result" not in result  # rows live in the file, never inline
+    assert result["years_returned"] == ["2024"]
+    summary_file = Path(result["file"])
+    assert summary_file.exists()
+    dumped = json.loads(summary_file.read_text())
+    assert "2024" in dumped["result"]
+
+
+async def test_get_path_summary_year_and_filter(tmp_path: Path) -> None:
+    payload = {
+        "result": {
+            "2025": {"paths": [{"pathname": "HLT_Ele32"}, {"pathname": "HLT_Mu50"}]},
+            "2024": {"paths": [{"pathname": "HLT_Ele35"}]},
+        }
+    }
+    recorder = Recorder(lambda _r: httpx.Response(200, json=payload))
+    settings, client = make_client(tmp_path, recorder)
+    result = await hltinfo.get_path_summary(client, settings, year=2025, pathname_contains="ele")
+    assert result["years_returned"] == ["2025"]
+    assert result["per_year"]["2025"] == {"paths_total": 1, "paths_returned": 1}
+    dumped = json.loads(Path(result["file"]).read_text())
+    names = [p["pathname"] for p in dumped["result"]["2025"]["paths"]]
+    assert names == ["HLT_Ele32"]
+
+
+async def test_get_path_summary_rejects_unknown_year(tmp_path: Path) -> None:
+    payload = {"result": {"2025": {"paths": []}}}
+    recorder = Recorder(lambda _r: httpx.Response(200, json=payload))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(InvalidInputError):
+        await hltinfo.get_path_summary(client, settings, year=1999)
 
 
 async def test_get_path_names_with_filter(tmp_path: Path) -> None:
@@ -127,6 +158,30 @@ async def test_summary_bounding(tmp_path: Path) -> None:
     assert result["years_returned"][0] == "2009"
     assert len(result["years_returned"]) == 5
     assert result["truncated"] is True
+
+
+async def test_summary_byte_cap_shrinks_paths_lists(tmp_path: Path) -> None:
+    """Real-shape payloads (year → {"paths": [...]}) always fit the byte budget."""
+    path_item = "x" * 5_000
+    years = {str(2020 + i): {"paths": [path_item] * 200, "year": 2020 + i} for i in range(5)}
+    payload = {"result": years}
+    recorder = Recorder(lambda _r: httpx.Response(200, json=payload))
+    settings, client = make_client(tmp_path, recorder)
+    result = await hltinfo.get_path_summary(client, settings)
+    dumped = json.loads(Path(result["file"]).read_text())
+    assert len(json.dumps(dumped["result"], default=str)) <= hltinfo._SUMMARY_MAX_RESULT_BYTES
+    assert result["truncated"] is True
+    # Deterministic halving: 200 → 100 → 50 entries per year fits the 2 MiB budget.
+    assert len(dumped["result"]["2024"]["paths"]) == 50
+    assert result["per_year"]["2024"] == {"paths_total": 200, "paths_returned": 50}
+
+
+async def test_summary_rejects_non_dict_result(tmp_path: Path) -> None:
+    """A non year-keyed payload is an adapter-visible error, not silent output."""
+    recorder = Recorder(lambda _r: httpx.Response(200, json={"result": [1, 2, 3]}))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError):
+        await hltinfo.get_path_summary(client, settings)
 
 
 async def test_get_path(tmp_path: Path) -> None:

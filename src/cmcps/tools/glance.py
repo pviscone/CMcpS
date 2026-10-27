@@ -16,8 +16,8 @@ from cmcps.tools.common import guarded
 
 _AUTH_DOC = (
     " Requires a per-app Keycloak Bearer token (audiences cms-alcm-api-prod and "
-    "cms-membership-api-prod), captured automatically by cern_auth_sign_in from "
-    "the cmsfence.cern.ch app roots, or set via CMCPS_GLANCE_ALCM_TOKEN / "
+    "cms-membership-api-prod), minted automatically from the stored SSO session "
+    "on first use, or set via CMCPS_GLANCE_ALCM_TOKEN / "
     "CMCPS_GLANCE_MEMBERSHIP_TOKEN."
 )
 

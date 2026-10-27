@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+# Hard budget for one tool result as JSON. JSON-RPC frames die at 16 MiB; an
+# oversize adapter result must fail cleanly, not kill the stdio transport.
+MAX_ENVELOPE_JSON_BYTES = 12 * 1024 * 1024
 
 
 class ErrorCode(StrEnum):
@@ -44,6 +49,18 @@ class ToolEnvelope(BaseModel):
     @classmethod
     def success(cls, data: BaseModel | dict[str, Any]) -> ToolEnvelope:
         payload = data.model_dump(mode="json") if isinstance(data, BaseModel) else dict(data)
+        if len(json.dumps(payload, default=str)) > MAX_ENVELOPE_JSON_BYTES:
+            return cls.failure(
+                ErrorPayload(
+                    code=ErrorCode.REQUEST_TOO_LARGE,
+                    message=("the tool result exceeded the transport budget and was not returned"),
+                    retryable=False,
+                    instructions=(
+                        "Narrow the request (filters, smaller limits); the result "
+                        "did not fit one MCP frame."
+                    ),
+                )
+            )
         return cls(status="ok", data=payload)
 
     @classmethod
@@ -106,3 +123,16 @@ class HealthResult(BaseModel):
     max_response_bytes: int
     max_download_bytes: int
     checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PageFetchResult(BaseModel):
+    """Visible-text render of one SSO-protected page via the headless browser."""
+
+    url: str
+    final_url: str
+    title: str | None = None
+    text: str
+    truncated: bool = False
+    marker: str | None = None
+    marker_found: bool | None = None
+    auth_divert: bool = False

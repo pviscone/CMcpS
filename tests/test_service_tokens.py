@@ -21,7 +21,11 @@ from cmcps.auth.tokens import (
     refresh_record,
 )
 from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, PolicyViolationError
+from cmcps.contracts.errors import (
+    BrowserUnavailableError,
+    InvalidInputError,
+    PolicyViolationError,
+)
 
 _ENDPOINT = "https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token"
 _POST = "grant_type=authorization_code&client_id=cmshltinfo-frontend&code=abc"
@@ -98,27 +102,64 @@ def test_store_load_missing(tmp_path: Path) -> None:
     assert store.load("hltinfo") is None
 
 
-async def test_sign_in_persists_captured_tokens(
+async def test_service_bearer_mints_lazily_on_first_use(
     settings: Settings, valid_storage_state: dict[str, Any]
 ) -> None:
-    exchange = {
-        "endpoint_url": _ENDPOINT,
-        "post_data": _POST,
-        "response_json": dict(_RESPONSE),
-    }
-    state = dict(valid_storage_state)
-    state["service_tokens"] = {"hltinfo": exchange}
+    """First use mints via headless capture; later calls reuse the stored record."""
+    calls: list[str] = []
 
-    async def collector(_: Settings, _timeout: int | None) -> dict[str, Any]:
-        return state
+    async def captor(_: Settings, _state: dict[str, Any], service: str) -> dict[str, Any] | None:
+        calls.append(service)
+        return {
+            "endpoint_url": _ENDPOINT,
+            "post_data": _POST,
+            "response_json": dict(_RESPONSE),
+        }
 
-    auth = AuthService(settings, collector=collector)
-    result = await auth.sign_in()
-    assert "hltinfo" in result.message
-    blob = result.model_dump_json()
-    assert "access-secret" not in blob
+    auth = AuthService(settings, bearer_captor=captor)
+    auth.store.save(valid_storage_state)
     token = await auth.service_bearer("hltinfo")
     assert token == "access-secret"
+    assert calls == ["hltinfo"]
+    again = await auth.service_bearer("hltinfo")
+    assert again == "access-secret"
+    assert calls == ["hltinfo"]  # second call used the stored record
+
+
+async def test_service_bearer_lazy_mint_capture_failure(
+    settings: Settings, valid_storage_state: dict[str, Any]
+) -> None:
+    """A failed headless capture surfaces as a missing token, not an exception."""
+
+    async def captor(_: Settings, _state: dict[str, Any], _service: str) -> dict[str, Any] | None:
+        return None
+
+    auth = AuthService(settings, bearer_captor=captor)
+    auth.store.save(valid_storage_state)
+    assert await auth.service_bearer("hltinfo") is None
+
+
+async def test_service_bearer_lazy_mint_browser_unavailable(
+    settings: Settings, valid_storage_state: dict[str, Any]
+) -> None:
+    async def captor(*_args: Any, **_kwargs: Any) -> dict[str, Any] | None:
+        raise BrowserUnavailableError("no browser")
+
+    auth = AuthService(settings, bearer_captor=captor)
+    auth.store.save(valid_storage_state)
+    assert await auth.service_bearer("hltinfo") is None
+
+
+async def test_service_bearer_lazy_mint_requires_session(settings: Settings) -> None:
+    calls: list[str] = []
+
+    async def captor(_: Settings, _state: dict[str, Any], service: str) -> dict[str, Any] | None:
+        calls.append(service)
+        return None
+
+    auth = AuthService(settings, bearer_captor=captor)
+    assert await auth.service_bearer("hltinfo") is None
+    assert calls == []  # no valid session: the browser is never started
 
 
 async def test_service_bearer_unknown_service(settings: Settings) -> None:

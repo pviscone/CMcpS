@@ -9,6 +9,12 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from cmcps import __version__
+from cmcps.auth.browser import (
+    FETCH_DEFAULT_MAX_CHARS,
+    FETCH_DEFAULT_TIMEOUT_SECONDS,
+    FETCH_MAX_CHARS_LIMIT,
+    FETCH_MAX_TIMEOUT_SECONDS,
+)
 from cmcps.auth.service import AuthService
 from cmcps.config.settings import (
     MAX_SSO_TIMEOUT_SECONDS,
@@ -16,9 +22,16 @@ from cmcps.config.settings import (
     Settings,
     get_settings,
 )
-from cmcps.contracts.errors import CMCPSError
-from cmcps.contracts.results import ErrorCode, ErrorPayload, HealthResult, ToolEnvelope
+from cmcps.contracts.errors import CMCPSError, UpstreamError
+from cmcps.contracts.results import (
+    ErrorCode,
+    ErrorPayload,
+    HealthResult,
+    PageFetchResult,
+    ToolEnvelope,
+)
 from cmcps.net.client import SafeHttpClient
+from cmcps.net.safety import validate_url
 from cmcps.tools import register_adapter_tools
 
 
@@ -32,6 +45,39 @@ def _failure(exc: Exception) -> ToolEnvelope:
             retryable=False,
         )
     )
+
+
+async def _cern_fetch_page_payload(
+    settings: Settings,
+    auth: AuthService,
+    *,
+    url: str,
+    wait_for: str | None,
+    timeout_seconds: int,
+    max_chars: int,
+) -> ToolEnvelope:
+    """Handler for the cern_fetch_page tool (kept out of build_server)."""
+    try:
+        validate_url(url, allowed_hosts=settings.allowed_hosts)
+        await auth.ensure_authenticated()
+        payload = await auth.fetch_page(
+            url,
+            wait_for=wait_for,
+            timeout_seconds=timeout_seconds,
+            max_chars=max_chars,
+        )
+        if payload is None:
+            raise UpstreamError(
+                "the page could not be rendered headlessly",
+                instructions=(
+                    "The stored SSO session may be stale, the page failed to "
+                    "load, or no browser is available. Retry after "
+                    "cern_auth_sign_in."
+                ),
+            )
+        return ToolEnvelope.success(PageFetchResult(**payload, marker=wait_for))
+    except Exception as exc:
+        return _failure(exc)
 
 
 def build_server(
@@ -85,7 +131,10 @@ def build_server(
         name="cern_auth_sign_in",
         description=(
             "Open a visible browser for CERN SSO and wait for the authenticated "
-            "Keycloak session. The storage state is stored locally with owner-only permissions. "
+            "Keycloak session. Only the login itself is visible: per-service "
+            "Bearer tokens are minted lazily on first API use, and cookie-only "
+            "site sessions are re-warmed on demand from the stored identity. "
+            "The storage state is stored locally with owner-only permissions. "
             "No cookies or tokens are returned."
         ),
     )
@@ -161,6 +210,50 @@ def build_server(
             return ToolEnvelope.success(result)
         except Exception as exc:
             return _failure(exc)
+
+    @server.tool(
+        name="cern_fetch_page",
+        description=(
+            "Render one CERN page in a headless browser through the stored SSO session "
+            "and return its visible text. Covers cookie-based sites and Keycloak-PKCE "
+            "single-page apps (the app's own token exchange completes silently), which "
+            "plain GET-based tools cannot read. Pass wait_for — a case-insensitive "
+            "substring of the expected content — to wait until SPA data appears; "
+            "without it the page is read once its text stabilizes. auth_divert=true "
+            "means the page landed on the SSO login: the stored session is stale, "
+            "re-run cern_auth_sign_in."
+        ),
+    )
+    async def cern_fetch_page(
+        url: Annotated[
+            str,
+            Field(description="Page URL; must pass the CERN host allowlist."),
+        ],
+        wait_for: Annotated[
+            str | None,
+            Field(
+                description="Case-insensitive text to wait for in the rendered page, "
+                "e.g. a table header or name."
+            ),
+        ] = None,
+        timeout_seconds: Annotated[
+            int,
+            Field(ge=5, le=FETCH_MAX_TIMEOUT_SECONDS),
+        ] = FETCH_DEFAULT_TIMEOUT_SECONDS,
+        max_chars: Annotated[
+            int,
+            Field(ge=1_000, le=FETCH_MAX_CHARS_LIMIT),
+        ] = FETCH_DEFAULT_MAX_CHARS,
+    ) -> ToolEnvelope:
+        """Browse one SSO-protected page headlessly and return its visible text."""
+        return await _cern_fetch_page_payload(
+            runtime_settings,
+            runtime_auth,
+            url=url,
+            wait_for=wait_for,
+            timeout_seconds=timeout_seconds,
+            max_chars=max_chars,
+        )
 
     http = SafeHttpClient(runtime_settings, auth_service=runtime_auth)
     register_adapter_tools(server, runtime_settings, runtime_auth, http)

@@ -242,3 +242,116 @@ async def test_request_json_post_rejects_unallowlisted_host(settings: Settings) 
             authenticated=False,
         )
     assert requests == []
+
+
+async def test_request_warms_site_and_retries_once(
+    settings: Settings, valid_storage_state: dict[str, Any], future_epoch: float
+) -> None:
+    """A 401 from a mapped site triggers one headless warm, then retries with fresh cookies."""
+    warmed: list[list[str]] = []
+
+    async def site_warmer(
+        _: Settings, _state: dict[str, Any], urls: list[str] | tuple[str, ...]
+    ) -> dict[str, Any]:
+        warmed.append(list(urls))
+        return {
+            "cookies": [
+                *valid_storage_state["cookies"],
+                {
+                    "name": "TWIKISID",
+                    "value": "fresh",
+                    "domain": ".twiki.cern.ch",
+                    "path": "/",
+                    "expires": future_epoch,
+                    "secure": True,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                },
+            ],
+            "origins": [],
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "TWIKISID" in request.headers.get("Cookie", ""):
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(401)
+
+    requests: list[httpx.Request] = []
+
+    def recorder(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return handler(request)
+
+    auth = AuthService(settings, site_warmer=site_warmer)
+    SessionStore(settings.session_path).save(valid_storage_state)
+    client = SafeHttpClient(
+        settings,
+        auth,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(recorder)),
+    )
+    response = await client.request("GET", "https://twiki.cern.ch/twiki/bin/view/CMS/WebHome")
+    assert response.status_code == 200
+    assert len(requests) == 2
+    assert warmed == [["https://twiki.cern.ch/twiki/bin/viewauth/CMS/WebHome"]]
+
+
+async def test_request_unmapped_host_401_never_warms(
+    settings: Settings, valid_storage_state: dict[str, Any]
+) -> None:
+    """A 401 from a host without a mapped cookie site passes through untouched."""
+    warmed: list[list[str]] = []
+
+    async def site_warmer(
+        _: Settings, _state: dict[str, Any], urls: list[str] | tuple[str, ...]
+    ) -> dict[str, Any]:
+        warmed.append(list(urls))
+        return {}
+
+    auth = AuthService(settings, site_warmer=site_warmer)
+    SessionStore(settings.session_path).save(valid_storage_state)
+    requests: list[httpx.Request] = []
+    client = SafeHttpClient(
+        settings,
+        auth,
+        client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: (requests.append(request), httpx.Response(403))[1]
+            )
+        ),
+    )
+    response = await client.request("GET", "https://gitlab.cern.ch/api/v4/projects")
+    assert response.status_code == 403
+    assert len(requests) == 1
+    assert warmed == []
+
+
+async def test_request_unauthenticated_401_never_warms(
+    settings: Settings, valid_storage_state: dict[str, Any]
+) -> None:
+    """Unauthenticated requests (no SSO header) never trigger the warm path."""
+    warmed: list[list[str]] = []
+
+    async def site_warmer(
+        _: Settings, _state: dict[str, Any], urls: list[str] | tuple[str, ...]
+    ) -> dict[str, Any]:
+        warmed.append(list(urls))
+        return {}
+
+    auth = AuthService(settings, site_warmer=site_warmer)
+    SessionStore(settings.session_path).save(valid_storage_state)
+    requests: list[httpx.Request] = []
+    client = SafeHttpClient(
+        settings,
+        auth,
+        client=httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: (requests.append(request), httpx.Response(401))[1]
+            )
+        ),
+    )
+    response = await client.request(
+        "GET", "https://twiki.cern.ch/twiki/bin/view/CMS/WebHome", authenticated=False
+    )
+    assert response.status_code == 401
+    assert len(requests) == 1
+    assert warmed == []

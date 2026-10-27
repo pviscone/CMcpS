@@ -272,8 +272,8 @@ Authenticated discovery (browser network inspection) found the mechanism:
 - **Auth**: three SPAs (`/alcm`, `/membership`, `/incubator`). Each SPA runs
   a Keycloak PKCE flow then calls its API with a **Bearer** token whose
   audience is `cms-<app>-api-prod`; SSO cookies, or the other app's token,
-  answer 401. Tokens are captured automatically by `cern_auth_sign_in`
-  through `BEARER_SERVICES` (same mechanism as hltinfo — app-root load
+  answer 401. Tokens are minted lazily on first API use through
+  `BEARER_SERVICES` (same mechanism as hltinfo — a headless app-root load
   triggers the exchange, access+refresh stored in
   `cern-service-tokens.json`, silent refresh). Manual env fallbacks:
   `CMCPS_GLANCE_ALCM_TOKEN`, `CMCPS_GLANCE_MEMBERSHIP_TOKEN`.

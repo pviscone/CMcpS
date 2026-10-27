@@ -28,6 +28,8 @@ through to HTML (detected as non-JSON and reported).
 
 from __future__ import annotations
 
+import json
+import time
 from typing import Any
 
 from cmcps.adapters.common import json_body
@@ -50,9 +52,10 @@ async def _service_headers(client: SafeHttpClient, settings: Settings) -> dict[s
         raise InvalidInputError(
             "hltinfo tools require a Keycloak Bearer token",
             instructions=(
-                "Call cern_auth_sign_in: the sign-in flow captures the "
-                f"{settings.hltinfo_base_url} Bearer token automatically. "
-                "Alternatively set CMCPS_HLTINFO_TOKEN manually."
+                f"The {settings.hltinfo_base_url} Bearer token is minted "
+                "automatically from the stored SSO session on first use — sign "
+                "in with cern_auth_sign_in first. Alternatively set "
+                "CMCPS_HLTINFO_TOKEN manually."
             ),
         )
     return {"Authorization": f"Bearer {token}"}
@@ -64,6 +67,14 @@ def _base(settings: Settings) -> str:
 
 _SUMMARY_YEARS_LIMIT = 5
 _SUMMARY_PATHS_PER_YEAR_LIMIT = 200
+# Hard cap for the bounded summary payload (~8 MB measured unbounded for 5
+# years in the Run-3 era): the whole envelope must stay far under the 16 MiB
+# stdio frame limit.
+_SUMMARY_MAX_RESULT_BYTES = 2 * 1024 * 1024
+
+
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, default=str))
 
 
 def _check_path_name(path_name: str) -> str:
@@ -116,38 +127,118 @@ async def list_menus(client: SafeHttpClient, settings: Settings) -> dict[str, An
     return {"source": SOURCE, "menu_count": len(items), "menus": menus}
 
 
-async def _bound_summary(result: Any) -> dict[str, Any]:
-    years = sorted(result.keys(), reverse=True)[:_SUMMARY_YEARS_LIMIT]
-    truncated_years = len(result) - len(years)
-    out: dict[str, Any] = {}
-    truncated_paths = 0
-    for year in years:
-        data = result[year]
-        if isinstance(data, dict) and len(data) > _SUMMARY_PATHS_PER_YEAR_LIMIT:
-            truncated_paths += len(data) - _SUMMARY_PATHS_PER_YEAR_LIMIT
-            data = dict(list(data.items())[:_SUMMARY_PATHS_PER_YEAR_LIMIT])
-        out[year] = data
-    return {
-        "result": out,
-        "years_returned": years,
-        "truncated": truncated_years > 0 or truncated_paths > 0,
-    }
+def _cut_paths(data: Any, limit: int) -> tuple[Any, int]:
+    """Cut one year's ``paths`` list to ``limit`` entries; return (data, removed)."""
+    if not isinstance(data, dict):
+        return data, 0
+    paths = data.get("paths")
+    if not isinstance(paths, list) or len(paths) <= limit:
+        return data, 0
+    return {**data, "paths": paths[:limit]}, len(paths) - limit
 
 
-async def get_path_summary(client: SafeHttpClient, settings: Settings) -> dict[str, Any]:
-    """Per-year summary of HLT paths, bounded to recent years (raw is ~8 MB)."""
+def _paths_of(data: Any) -> list[Any] | None:
+    if isinstance(data, dict) and isinstance(data.get("paths"), list):
+        return data["paths"]
+    return None
+
+
+def _write_summary_file(settings: Settings, payload: dict[str, Any]) -> str:
+    settings.ensure_directories()
+    path = settings.download_dir / f"hltinfo-pathsummary-{time.time_ns()}.json"
+    path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    return str(path)
+
+
+async def get_path_summary(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    year: int | None = None,
+    pathname_contains: str | None = None,
+) -> dict[str, Any]:
+    """Per-year HLT path summary as a file + metadata; rows never inline.
+
+    The raw table (~8 MB in the Run-3 era) holds verbose per-path aggregates
+    (active/effective lumi, counts, datasets, first/last run) — unsuitable for
+    a tool result. The bounded rows (≤ ``_SUMMARY_MAX_RESULT_BYTES``) are
+    written to CMcpS download storage; the result carries years, per-year
+    counts, truncation info, and the file path only. ``year`` selects one
+    year (default: the 5 latest); ``pathname_contains`` filters path names
+    case-insensitively before the byte cap.
+    """
+    if pathname_contains is not None and not pathname_contains.strip():
+        raise InvalidInputError("pathname_contains must not be empty")
     payload = await _get(client, settings, "pathsummary", source="hltinfo pathsummary")
     result = payload.get("result") if isinstance(payload, dict) else payload
     if not isinstance(result, dict):
-        return {"source": SOURCE, "result": result, "truncated": False}
-    bounded = await _bound_summary(result)
+        raise UpstreamError(
+            "hltinfo returned a pathsummary payload of unexpected shape",
+            instructions="Expected a year-keyed result object; the API may have changed.",
+        )
+    all_years = sorted(result.keys(), reverse=True)
+    if year is not None:
+        key = str(year)
+        if key not in result:
+            raise InvalidInputError(
+                f"no summary for year {year}",
+                instructions=f"Available years: {', '.join(all_years)}.",
+            )
+        kept_years = [key]
+    else:
+        kept_years = all_years[:_SUMMARY_YEARS_LIMIT]
+    needle = pathname_contains.strip().lower() if pathname_contains else None
+    filtered: dict[str, Any] = {}
+    for key in kept_years:
+        data = result[key]
+        paths = _paths_of(data)
+        if paths is not None and needle is not None:
+            paths = [p for p in paths if needle in str(p.get("pathname", "")).lower()]
+            data = {**data, "paths": paths}
+        filtered[key] = data
+
+    path_limit = _SUMMARY_PATHS_PER_YEAR_LIMIT
+    truncated_paths = 0
+    while True:
+        out: dict[str, Any] = {}
+        truncated_paths = 0
+        for key in kept_years:
+            data, removed = _cut_paths(filtered[key], path_limit)
+            truncated_paths += removed
+            out[key] = data
+        if path_limit <= 1 or _json_size(out) <= _SUMMARY_MAX_RESULT_BYTES:
+            break
+        path_limit //= 2
+
+    file_path = _write_summary_file(
+        settings,
+        {
+            "source": SOURCE,
+            "years_returned": kept_years,
+            "pathname_contains": pathname_contains,
+            "result": out,
+        },
+    )
+    per_year = {
+        key: {
+            "paths_total": (
+                len(paths) if (paths := _paths_of(filtered[key])) is not None else None
+            ),
+            "paths_returned": (
+                len(paths) if (paths := _paths_of(out.get(key))) is not None else None
+            ),
+        }
+        for key in kept_years
+    }
     return {
         "source": SOURCE,
-        "years_returned": bounded["years_returned"],
-        "truncated": bounded["truncated"],
-        "result": bounded["result"],
-        "note": "Bounded to the latest "
-        f"{_SUMMARY_YEARS_LIMIT} years and {_SUMMARY_PATHS_PER_YEAR_LIMIT} paths/year.",
+        "file": file_path,
+        "years_returned": kept_years,
+        "available_years": all_years,
+        "pathname_contains": pathname_contains,
+        "per_year": per_year,
+        "truncated": truncated_paths > 0 or (year is None and len(result) > len(kept_years)),
+        "note": "Rows written to CMcpS download storage; only metadata is inline.",
     }
 
 

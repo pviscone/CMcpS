@@ -39,13 +39,33 @@ async def test_cms_alcm_session_ready_requires_openidc_cookie() -> None:
     assert await browser._cms_alcm_session_ready(_FakeContext({})) is False
 
 
+async def test_cmsoms_session_ready_requires_openidc_cookie() -> None:
+    logged_in = _FakeContext(
+        {"https://cmsoms.cern.ch": [{"name": "mod_auth_openidc_session", "value": "s"}]}
+    )
+    assert await browser._cmsoms_session_ready(logged_in) is True
+    assert await browser._cmsoms_session_ready(_FakeContext({})) is False
+
+
 def test_cookie_only_sites_cover_restricted_hosts() -> None:
     urls = {url for url, _, _ in browser._COOKIE_ONLY_SITES}
     assert "https://cds.cern.ch/youraccount/login?ln=en" in urls
     assert "https://cms-alcm.web.cern.ch/" in urls
+    assert "https://cmsoms.cern.ch/" in urls
+
+
+def test_cookie_site_url_for_host_reverse_map() -> None:
+    assert (
+        browser.cookie_site_url_for_host("its.cern.ch")
+        == "https://its.cern.ch/jira/login.jsp?os_destination=%2Fsecure%2FDashboard.jspa"
+    )
+    assert browser.cookie_site_url_for_host("cmsoms.cern.ch") == "https://cmsoms.cern.ch/"
+    assert browser.cookie_site_url_for_host("gitlab.cern.ch") is None
 
 
 async def test_warm_cookie_sites_no_targets_is_noop(tmp_path: Path) -> None:
     settings = Settings(state_dir=tmp_path, require_sso=False, browser_executable=None)
-    result = await browser.warm_cookie_sites(settings, {"cookies": [], "origins": []}, ["https://example.edu"])
+    result = await browser.warm_cookie_sites(
+        settings, {"cookies": [], "origins": []}, ["https://example.edu"]
+    )
     assert result is None

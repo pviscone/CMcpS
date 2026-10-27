@@ -220,7 +220,7 @@ M1 and M2 are implemented and green. M1 (auth foundation) is unchanged in behavi
 
 After a real SSO session became available, the two deferred platforms were delivered plus the SDT dashboard surface was completed:
 
-- `glance_*` (11): ALCM/CADI and Membership SPAs at cmsfence.cern.ch use per-app Keycloak **Bearer** tokens (audiences `cms-alcm-api-prod` / `cms-membership-api-prod`) issued via RFC 8693 token exchange; `cern_auth_sign_in` captures them (`BEARER_SERVICES`), refresh goes through refresh→re-exchange (`BEARER_SERVICE_EXCHANGE_AUDIENCES`) because a plain refresh loses the API audience. Cookie-only calls answer 401. Env fallbacks `CMCPS_GLANCE_ALCM_TOKEN`/`CMCPS_GLANCE_MEMBERSHIP_TOKEN`. `glance_search_notes` needs `CMCPS_MAX_RESPONSE_BYTES` > ~16 MB (single ~15 MB upstream index). Incubator SPA not implemented (nothing useful read-only).
+- `glance_*` (11): ALCM/CADI and Membership SPAs at cmsfence.cern.ch use per-app Keycloak **Bearer** tokens (audiences `cms-alcm-api-prod` / `cms-membership-api-prod`) issued via RFC 8693 token exchange; tokens are minted lazily on first use (`BEARER_SERVICES` + `capture_bearer_service`), refresh goes through refresh→re-exchange (`BEARER_SERVICE_EXCHANGE_AUDIENCES`) because a plain refresh loses the API audience. Cookie-only calls answer 401. Env fallbacks `CMCPS_GLANCE_ALCM_TOKEN`/`CMCPS_GLANCE_MEMBERSHIP_TOKEN`. `glance_search_notes` needs `CMCPS_MAX_RESPONSE_BYTES` > ~16 MB (single ~15 MB upstream index). Incubator SPA not implemented (nothing useful read-only).
 - `cmssearch_*` (4): FastAPI "CERN Batch Docs Search" (public OpenAPI, Keycloak-proxied) — search, document, sources, index stats. Cookie SSO suffices.
 - `cmssdt_*` extended (+7, now 8): IB queues, per-arch latest-IB summary, IB comparison details, CMSSW labels, open PRs per release family, RelVal archs, and a pure-derivation build-log URL tool.
 - `docdb_*` (4): CMS DocDB (cms-docdb.cern.ch) is Perl-CGI HTML-only; GET search (Keycloak blocks the POST form), ShowDocument metadata parse, see-recent list, RetrieveFile downloads. cms-docdb serves a CERN Grid CA host certificate absent from certifi, so the shared client now uses the system CA store. Live-verified (LAGG document 14372: search, get, PDF download).
@@ -286,9 +286,12 @@ M2 sections below are unchanged.
 - Python MCP SDK 2.x stdio server.
 - Registered tools:
   - `cern_auth_sign_in`
+  - `cern_auth_reauthenticate`
   - `cern_auth_status`
   - `cern_health`
+  - `cern_fetch_page` — headless SSO-protected page render through the stored session (works for cookie-based sites and Keycloak-PKCE SPAs whose token exchange completes silently); `wait_for` polls for a case-insensitive substring, `auth_divert` flags a stale session that landed on the SSO login.
 - Visible Playwright-backed CERN SSO flow with system Chromium/Firefox detection.
+- Lazy Bearer mint: `BEARER_SERVICES` exchanges are captured headlessly on first adapter use (`capture_bearer_service` via `service_bearer`), and cookie-only site sessions self-warm centrally: `SafeHttpClient.request` retries once after a mapped-site 401/403 via `warm_sites` (`cookie_site_url_for_host` reverse map). The visible browser closes right after login.
 - Server-side auth guard with structured `AUTH_REQUIRED` results.
 - Minimized credential persistence:
   - only allowlisted cookies are stored;

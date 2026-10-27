@@ -8,8 +8,8 @@ with its own Keycloak client and a Bearer-token-only JSON API:
 - Membership (``/membership/api/...``, audience ``cms-membership-api-prod``) —
   CMS membership/author lists.
 
-Tokens are captured per app during ``cern_auth_sign_in`` (each app root is
-loaded by the sign-in flow to trigger its own PKCE exchange), or supplied via
+Tokens are minted lazily on first API use: the call re-opens the app root
+headlessly and intercepts its own PKCE exchange. Manual override:
 ``CMCPS_GLANCE_ALCM_TOKEN`` / ``CMCPS_GLANCE_MEMBERSHIP_TOKEN``. Cookies or a
 token from the other app answer 401; there is no session-cookie API access.
 
@@ -134,9 +134,9 @@ async def _service_headers(
         raise InvalidInputError(
             f"GLANCE {app} tools require a Keycloak Bearer token",
             instructions=(
-                f"Call cern_auth_sign_in: the sign-in flow captures the {audience} "
-                f"Bearer token from {settings.glance_base_url}/{app} automatically. "
-                f"Alternatively set {env_var} manually."
+                f"The {audience} Bearer token is minted automatically from the "
+                "stored SSO session on first use — sign in with cern_auth_sign_in "
+                f"first. Alternatively set {env_var} manually."
             ),
         )
     return {"Authorization": f"Bearer {token}"}
@@ -162,8 +162,9 @@ async def _app_get(
         raise UpstreamError(
             f"GLANCE {app} rejected the request ({response.status_code})",
             instructions=(
-                f"The Bearer token for audience {audience} is missing or expired. "
-                "Re-run cern_auth_sign_in to capture a fresh token, or refresh the "
+                f"The Bearer token for audience {audience} is missing or expired, "
+                "and re-minting from the stored SSO session failed. Re-run "
+                "cern_auth_sign_in if the session is stale, or refresh the "
                 f"CMCPS_GLANCE_{app.upper()}_TOKEN environment variable."
             ),
         )

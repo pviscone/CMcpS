@@ -179,6 +179,27 @@ async def test_sign_in_persists_only_allowlisted_cookie_state(
     assert "localStorage" not in serialized
 
 
+async def test_sign_in_mints_nothing_eagerly(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    """Sign-in stores only the identity; Bearer capture waits for first use."""
+
+    async def collector(_: Settings, _timeout: int | None) -> dict[str, Any]:
+        return valid_storage_state
+
+    async def failing_captor(*_args: Any, **_kwargs: Any) -> dict[str, Any] | None:
+        raise AssertionError("no Bearer capture may run during sign-in")
+
+    auth = AuthService(settings, collector=collector, bearer_captor=failing_captor)
+    result = await auth.sign_in()
+    assert result.authenticated is True
+    assert "Captured" not in result.message
+    assert auth.service_token_store().load_all() == {}
+    session = await auth.ensure_authenticated()
+    assert session.authenticated
+
+
 async def test_reauthenticate_discards_session_and_service_tokens(
     settings: Settings,
     valid_storage_state: dict[str, Any],

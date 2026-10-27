@@ -15,6 +15,7 @@ BOOTSTRAP_TOOLS = {
     "cern_auth_reauthenticate",
     "cern_auth_status",
     "cern_health",
+    "cern_fetch_page",
 }
 INDICO_TOOLS = {
     "indico_get_user_info",
@@ -476,7 +477,10 @@ async def test_status_and_browser_sign_in_return_secret_free_metadata(
         assert timeout == 60
         return valid_storage_state
 
-    auth = AuthService(settings, collector=collector)
+    async def captor(*_args: Any, **_kwargs: Any) -> dict[str, Any] | None:
+        raise AssertionError("no Bearer capture may run during sign-in")
+
+    auth = AuthService(settings, collector=collector, bearer_captor=captor)
     server = build_server(settings, auth_service=auth)
 
     status_before = await server.call_tool("cern_auth_status", {})

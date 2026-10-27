@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from cmcps.auth.browser import cookie_site_url_for_host
 from cmcps.auth.service import AuthService
 from cmcps.config.settings import Settings
 from cmcps.contracts.errors import PolicyViolationError, RequestTooLargeError
@@ -21,6 +22,7 @@ from cmcps.net.safety import redact_url, validate_headers, validate_method, vali
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _CHUNK_SIZE = 64 * 1024
 _DOWNLOAD_MIN_ERROR = 300
+_WARM_RETRY_STATUSES = {401, 403}
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +153,55 @@ class SafeHttpClient:
         return headers
 
     async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, str | int | float | bool] | None = None,
+        headers: dict[str, str] | None = None,
+        authenticated: bool = True,
+        service_headers: dict[str, str] | None = None,
+    ) -> SafeResponse:
+        """Fetch a bounded response, warming the site's SSO session on 401/403.
+
+        Lazy cookie mint: when a mapped cookie-only site answers 401/403, its
+        session is re-established headlessly from the stored identity and the
+        request is retried once — adapters do not warm sites themselves.
+        """
+        response = await self._request(
+            method,
+            url,
+            params=params,
+            headers=headers,
+            authenticated=authenticated,
+            service_headers=service_headers,
+        )
+        if response.status_code in _WARM_RETRY_STATUSES and await self._warm_for_host(
+            url, authenticated=authenticated
+        ):
+            response = await self._request(
+                method,
+                url,
+                params=params,
+                headers=headers,
+                authenticated=authenticated,
+                service_headers=service_headers,
+            )
+        return response
+
+    async def _warm_for_host(self, url: str, *, authenticated: bool) -> bool:
+        """Headlessly re-establish the cookie session for ``url``'s host, if mapped."""
+        if not authenticated or self.auth_service is None:
+            return False
+        hostname = urlsplit(url).hostname
+        if hostname is None:
+            return False
+        site_url = cookie_site_url_for_host(hostname)
+        if site_url is None:
+            return False
+        return await self.auth_service.warm_sites([site_url])
+
+    async def _request(
         self,
         method: str,
         url: str,

@@ -3,10 +3,11 @@
 Some CERN services (e.g. the CMS HLT info API) accept only an
 ``Authorization: Bearer <token>`` header whose token belongs to the
 service's own Keycloak public client — browser SSO cookies alone return
-``401``. The visible SSO sign-in flow therefore also opens each configured
-service app in the same authenticated browser context and intercepts the
+``401``. The first time an adapter needs such a service, its app root is
+re-opened headlessly against the stored identity (lazy capture) and the
 SPA's authorization-code exchange with the Keycloak token endpoint
-(``/protocol/openid-connect/token``). The captured public-client token
+(``/protocol/openid-connect/token``) is intercepted. The captured
+public-client token
 response (access token, refresh token, client id, endpoint URL) is stored
 with 0600 permissions and refreshed later with a plain
 ``grant_type=refresh_token`` POST, so day-to-day use never reopens the

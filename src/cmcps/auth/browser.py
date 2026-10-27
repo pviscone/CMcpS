@@ -130,25 +130,40 @@ async def _capture_one_service(context: BrowserContext, app_url: str) -> dict[st
     return exchange if exchange.get(_CAPTURE_FIELD) is not None else None
 
 
-async def _capture_bearer_services(
+async def capture_bearer_service(
     settings: Settings,
-    context: BrowserContext,
-) -> dict[str, dict[str, Any]]:
-    """Intercept each configured Bearer service's Keycloak token exchange.
+    storage_state: dict[str, Any],
+    service: str,
+) -> dict[str, Any] | None:
+    """Mint one Bearer service's token set headlessly from the stored identity.
 
-    Runs inside the already-authenticated browser context, so each service
-    SPA performs a silent OIDC flow visible to the page-level response
-    listener. Failures are non-fatal — sign-in succeeds without a token.
+    Lazy counterpart of the old eager capture: the first time an adapter
+    needs a service, its app root is re-opened headlessly, performs its
+    silent OIDC/PKCE flow against the stored Keycloak identity, and the
+    token-endpoint exchange is intercepted. Returns the raw captured
+    exchange, or ``None`` when the service is unknown/unconfigured or no
+    exchange was intercepted. ``BrowserUnavailableError`` propagates so the
+    caller can distinguish "no browser" from "no exchange".
     """
-    captured: dict[str, dict[str, Any]] = {}
-    for service, url_attr in BEARER_SERVICES.items():
-        app_url = getattr(settings, url_attr, None)
-        if not app_url:
-            continue
-        exchange = await _capture_one_service(context, str(app_url))
-        if exchange is not None:
-            captured[service] = exchange
-    return captured
+    url_attr = BEARER_SERVICES.get(service)
+    if url_attr is None:
+        return None
+    app_url = getattr(settings, url_attr, None)
+    if not app_url:
+        return None
+    browser: Browser | None = None
+    context: BrowserContext | None = None
+    try:
+        async with async_playwright() as playwright:
+            browser = await _launch_browser(settings, playwright, headless=True)
+            context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
+            return await _capture_one_service(context, str(app_url))
+    except PlaywrightError:
+        logger.debug("Lazy Bearer capture failed for %s", service, exc_info=True)
+        return None
+    finally:
+        await _close_resource(context, f"lazy-capture context {service}")
+        await _close_resource(browser, f"lazy-capture browser {service}")
 
 
 # SSO-protected sites that only need session cookies (no Bearer tokens).
@@ -273,12 +288,29 @@ async def _servicenow_session_ready(context: BrowserContext) -> bool:
     return bool(names & {"JSESSIONID", "glide_session_store"})
 
 
+async def _cmsoms_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds a session on cmsoms.cern.ch.
+
+    The CMS OMS API (``/agg/api/...``) gates on WebFrameworks OIDC and drops
+    ``mod_auth_openidc_session`` during the silent handshake at the UI root
+    (it lands on ``/cms/run_3/index``). Verified 2026-10: the API answers 401
+    until this cookie exists.
+    """
+    try:
+        cookies = await context.cookies("https://cmsoms.cern.ch")
+    except PlaywrightError:
+        return False
+    return any(cookie.get("name") == "mod_auth_openidc_session" for cookie in cookies)
+
+
 # The TWiki entry visits the viewauth script so the SSO handshake drops the
 # twiki.cern.ch session cookie used by scripts that gate on login (protected
 # attachment downloads); page content itself is served anonymously.
 # The CDS entry is needed for restricted CDS records/files (SSO-gated); the
 # cms-alcm.web.cern.ch entry for every GLANCE document file (papers, PAS,
 # notes) downloaded via the ALCM "cernbox" link pattern.
+# The CMS OMS entry is needed for the cmsonline_* run/fill/lumi tools: the
+# OMS API rejects requests without its own mod_auth_openidc session.
 _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], ...] = (
     ("https://cms-talk.web.cern.ch", None, None),
     ("https://cms-pub-talk.web.cern.ch", None, None),
@@ -287,7 +319,22 @@ _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], 
     ("https://cds.cern.ch/youraccount/login?ln=en", None, _cds_session_ready),
     ("https://cms-alcm.web.cern.ch/", None, _cms_alcm_session_ready),
     (SERVICENOW_SITE_URL, None, _servicenow_session_ready),
+    ("https://cmsoms.cern.ch/", None, _cmsoms_session_ready),
 )
+
+
+def cookie_site_url_for_host(hostname: str) -> str | None:
+    """Return the configured cookie-site URL that warms ``hostname``, if any.
+
+    Reverse lookup used by the shared HTTP client: a 401/403 from one of
+    these hosts means the site's session expired; warm it headlessly (lazy
+    cookie mint) and retry once.
+    """
+    for site_url, _, _ in _COOKIE_ONLY_SITES:
+        if urlsplit(site_url).hostname == hostname:
+            return site_url
+    return None
+
 
 _COOKIE_CAPTURE_TIMEOUT_MS = 30_000
 _COOKIE_READY_TIMEOUT_SECONDS = 30.0
@@ -369,14 +416,17 @@ async def warm_cookie_sites(
         await _close_resource(browser, "warm-up browser")
 
 
-async def collect_sso_state(
+async def collect_sso_identity(
     settings: Settings,
     timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
-    """Open a browser and wait until a configured CERN identity cookie exists.
+    """Open a visible browser and wait until a configured CERN identity cookie exists.
 
-    The returned dictionary is Playwright storage state. It contains credentials and must
-    only be passed to :class:`cmcps.auth.store.SessionStore`.
+    This one visible login is all the user interaction ever needed: every
+    follow-up (Bearer-token capture, cookie-only site sessions, page renders)
+    runs headlessly against the saved state. The returned dictionary is
+    Playwright storage state. It contains credentials and must only be passed
+    to :class:`cmcps.auth.store.SessionStore`.
     """
     timeout = timeout_seconds if timeout_seconds is not None else settings.sso_timeout_seconds
     browser: Browser | None = None
@@ -393,13 +443,7 @@ async def collect_sso_state(
                 timeout=min(30_000, timeout * 1000),
             )
             await _wait_for_authenticated_state(settings, context, page, timeout)
-            capture = await _capture_bearer_services(settings, context)
-            await _capture_cookie_only_sites(context)
-            # Re-capture after the service visits so Bearer-app and cookie-only
-            # session cookies are persisted too.
-            storage_state = await context.storage_state()
-            storage_state["service_tokens"] = capture
-            return storage_state
+            return await context.storage_state()
     finally:
         await _close_resource(context, "context")
         await _close_resource(browser, "browser")
@@ -518,9 +562,7 @@ async def extract_local_storage_value(
     deadline = asyncio.get_running_loop().time() + _EXTRACT_TIMEOUT_SECONDS
     browser: Browser | None = None
     context: BrowserContext | None = None
-    probe = (
-        "(key) => window.localStorage.getItem(key)"
-    )
+    probe = "(key) => window.localStorage.getItem(key)"
     try:
         async with async_playwright() as playwright:
             browser = await _launch_browser(settings, playwright, headless=True)
@@ -552,3 +594,117 @@ async def extract_local_storage_value(
     finally:
         await _close_resource(context, "local-storage context")
         await _close_resource(browser, "local-storage browser")
+
+
+FETCH_DEFAULT_TIMEOUT_SECONDS = 45
+FETCH_MAX_TIMEOUT_SECONDS = 120
+FETCH_DEFAULT_MAX_CHARS = 20_000
+FETCH_MAX_CHARS_LIMIT = 200_000
+_FETCH_STABLE_POLLS = 2
+
+# Hosts the page ends on when the stored SSO session is dead: the new authflow
+# front and the legacy Keycloak realm (settings.sso_identity_host).
+_AUTHFLOW_HOST = "authflow.cern.ch"
+
+
+async def _poll_body_text(
+    page: Page,
+    *,
+    marker: str | None,
+    poll_seconds: float,
+    deadline: float,
+) -> tuple[str, bool]:
+    """Poll ``body`` innerText until the marker appears or the text stabilizes.
+
+    With a ``marker`` the returned flag means "marker found"; without one it
+    means "text stopped changing". Transient innerText failures (page
+    mid-navigation) keep the current poll cycle.
+    """
+    text = ""
+    last: str | None = None
+    stable = 0
+    while not page.is_closed():
+        try:
+            current = await page.inner_text("body")
+        except PlaywrightError:
+            current = None
+        if current is not None:
+            text = current
+            if marker is not None:
+                if marker in current.casefold():
+                    return text, True
+            elif not current.strip():
+                stable = 0
+            elif current == last:
+                stable += 1
+                if stable >= _FETCH_STABLE_POLLS:
+                    return text, True
+            else:
+                stable = 0
+            last = current
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return text, False
+        await asyncio.sleep(min(poll_seconds, remaining))
+    return text, False
+
+
+async def fetch_page_text(
+    settings: Settings,
+    storage_state: dict[str, Any],
+    url: str,
+    wait_for: str | None = None,
+    timeout_seconds: int = FETCH_DEFAULT_TIMEOUT_SECONDS,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Render one SSO-protected page headlessly and return its visible text.
+
+    Generic counterpart to :func:`render_page_html` (which targets the ADF
+    portal): works for cookie-backed pages and for Keycloak-PKCE SPAs whose
+    token exchange completes silently against the stored identity. Polls the
+    ``body`` innerText until ``wait_for`` (case-insensitive substring)
+    appears, or — without a marker — until the text stops changing. Returns
+    ``(payload, refreshed_storage_state)`` or ``None`` when the page failed
+    to load. The payload carries ``auth_divert=True`` when the final URL
+    landed on an authentication host, signalling a stale session.
+    """
+    marker = wait_for.casefold() if wait_for else None
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    browser: Browser | None = None
+    context: BrowserContext | None = None
+    try:
+        async with async_playwright() as playwright:
+            browser = await _launch_browser(settings, playwright, headless=True)
+            context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
+            page = await context.new_page()
+            try:
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=min(30_000, timeout_seconds * 1000),
+                )
+            except PlaywrightError:
+                logger.debug("Fetch-page load failed for %s", url)
+                return None
+            text, found = await _poll_body_text(
+                page,
+                marker=marker,
+                poll_seconds=settings.sso_poll_seconds,
+                deadline=deadline,
+            )
+            try:
+                title = await page.title() or None
+            except PlaywrightError:
+                title = None
+            final_host = urlsplit(page.url).hostname or ""
+            payload = {
+                "url": url,
+                "final_url": page.url,
+                "title": title,
+                "text": text,
+                "marker_found": found if marker is not None else None,
+                "auth_divert": final_host in {settings.sso_identity_host, _AUTHFLOW_HOST},
+            }
+            return payload, await context.storage_state()
+    finally:
+        await _close_resource(context, "fetch-page context")
+        await _close_resource(browser, "fetch-page browser")
