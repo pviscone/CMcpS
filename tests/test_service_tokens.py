@@ -320,6 +320,7 @@ async def test_service_token_status_shape(settings: Settings) -> None:
         "hltinfo": {"captured": False},
         "glance_alcm": {"captured": False},
         "glance_membership": {"captured": False},
+        "phonebook": {"captured": False},
     }
     auth.service_token_store().save(_record())
     status = auth.service_token_status()

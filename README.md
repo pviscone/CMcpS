@@ -408,6 +408,13 @@ Data-certification queries against the Run Registry (RR): which runs are signifi
 - `runregistry_get_dataset` — one certification record by run + exact dataset name (workspace offline states `dt_state`/`global_state`/… plus triplet counts).
 - `runregistry_get_lumisection_ranges` — lumisection certification `[start, end]` ranges of one dataset of one run (`dataset_name='online'` default) with per-component status/comment/cause; `by_component=true` groups the ranges per `workspace-column` key.
 
+## CERN Phonebook tools (directory.web.cern.ch → phonebook.cern.ch)
+
+directory.web.cern.ch is a Drupal portal whose search tabs delegate to CDS, Indico, the Service Portal, and the CERN Map (each covered by its own adapter); its unique surface is the **CERN Phonebook** of people and services, a React SPA at phonebook.cern.ch with a private JSON API (`GET /api/search`, `GET /api/search/lastUpdate`). Auth: the API rejects anonymous calls (`401 Bearer`); the SPA's own Keycloak public client `phonebook` token is minted headlessly from the stored SSO session on first use and refreshed silently afterwards (like hltinfo; `cern-service-tokens.json`, 0600). Manual fallback: `CMCPS_PHONEBOOK_TOKEN`. The `tls_client_certificate_bound_access_tokens` flag in the protected-resource metadata is **not** enforced for plain Bearer HTTPS calls (verified live).
+
+- `phonebook_search` — full-text search over CERN people and services: name, first/last name, email, organic unit, office location, landlines (`phone1`/`phone2`), `mobilePhone`, postbox, preferred language per hit; `type` is `PERSON` or `SERVICE`. Fixed 10 hits per page, 1-based `page`; `total_count` and `has_more` come from the backend page.
+- `phonebook_last_update` — last-update timestamp of the directory database (result freshness).
+
 ## Configuration
 
 Configuration uses environment variables with the `CMCPS_` prefix. Common settings:

@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     glance_membership_app_url: str = "https://cmsfence.cern.ch/membership"
     glance_alcm_token: str | None = None
     glance_membership_token: str | None = None
+    # directory.web.cern.ch fronts the CERN Phonebook SPA (phonebook.cern.ch);
+    # its /api/* routes accept only the Keycloak public-client Bearer token of
+    # client "phonebook", minted headlessly on first use from the stored SSO
+    # session (see BEARER_SERVICES). CMCPS_PHONEBOOK_TOKEN overrides.
+    phonebook_app_url: str = "https://phonebook.cern.ch/"
+    phonebook_token: str | None = None
     # M4: CERN website inventory (webservices-portal.web.cern.ch). The portal's
     # SPA authenticates through a backend /authenticate route (no Keycloak
     # token POST in the browser), so the Bearer token is minted on demand by a

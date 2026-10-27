@@ -48,6 +48,7 @@ BEARER_SERVICES: dict[str, str] = {
     "hltinfo": "hltinfo_base_url",
     "glance_alcm": "glance_alcm_app_url",
     "glance_membership": "glance_membership_app_url",
+    "phonebook": "phonebook_app_url",
 }
 
 # Services whose API tokens are issued through RFC 8693 token exchange: the

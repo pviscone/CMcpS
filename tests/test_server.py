@@ -224,6 +224,10 @@ RUNREGISTRY_TOOLS = {
     "runregistry_get_dataset",
     "runregistry_get_lumisection_ranges",
 }
+PHONEBOOK_TOOLS = {
+    "phonebook_search",
+    "phonebook_last_update",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -255,6 +259,7 @@ ALL_TOOLS = (
     | WEBSITES_TOOLS
     | SERVICENOW_TOOLS
     | RUNREGISTRY_TOOLS
+    | PHONEBOOK_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
@@ -324,6 +329,8 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "runregistry_search_datasets": {},
     "runregistry_get_dataset": {"run_number": 1, "dataset_name": "online"},
     "runregistry_get_lumisection_ranges": {"run_number": 1},
+    "phonebook_search": {"query": "doe"},
+    "phonebook_last_update": {},
     "jira_search": {"jql": "project = CMSTRACK"},
     "jira_get_issue": {"issue_key": "CMSTRACK-1"},
     "jira_get_project": {"project_key": "CMSTRACK"},

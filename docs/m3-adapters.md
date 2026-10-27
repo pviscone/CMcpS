@@ -874,3 +874,56 @@ Authenticated discovery (browser network inspection) found the mechanism:
 - **Live verification** (SSO session): dataset names of run 379611 (GET,
   JSON), newest-first runs page with empty filter (POST, JSON), full
   search→detail→datasets→lumisection-ranges round trip.
+
+## CERN Phonebook (directory.web.cern.ch → phonebook.cern.ch) — delivered
+
+- **Discovery date**: 2026-10-27 (anonymous probes of the portal and SPA
+  bundle, then live authenticated probes through the stored SSO session).
+- **Portal shape**: directory.web.cern.ch is a static Drupal landing page
+  whose search tabs delegate to other services: CERN Phonebook
+  (phonebook.cern.ch), CDS, CERN Service Portal, Indico, CERN Map — the four
+  latter already covered by their own adapters, so the only unique surface
+  is the CERN Phonebook of people and services.
+- **Endpoint type**: private JSON API behind a React (Vite) SPA
+  (`phonebook.cern.ch`), routes recovered from the production bundle
+  (`assets/index-*.js`):
+  - `GET /api/search?query=<q>&page=<n>` — full-text search over people and
+    services; Spring-style page (`content`, 0-based `number`,
+    `totalElements`, `totalPages`, `first`/`last`, fixed `size=10` — the
+    `size` query param is silently ignored, verified live). Content rows:
+    PERSON (`firstName`, `lastName`, `email`, `organicUnit`,
+    `location` building/office, `phone1`/`phone2`/`mobilePhone` as
+    `{displayNumber, fullNumber}`, `postBox`, `preferredLanguage`,
+    `snowId: null`) or SERVICE (`name`, `email`, `snowId`, other fields
+    null). PERSON rows carry the full contact record — there is no separate
+    person-detail endpoint in the SPA.
+  - `GET /api/search/lastUpdate` — directory database freshness
+    (`{"lastUpdate": "<iso8601>"}`).
+  - `GET /api/sso/realm` — public Keycloak config
+    (`{"url": "https://auth.cern.ch/auth", "realm": "cern", "clientId":
+    "phonebook"}`); informational only.
+  - `/api/profile` — the *caller's own* profile (read/write); out of
+    read-only scope.
+- **Auth**: every `/api/*` route answers anonymous requests with
+  `401 WWW-Authenticate: Bearer resource_metadata="https://phonebook.cern.ch
+  /api/.well-known/oauth-protected-resource"` — a bearer-only API like
+  hltinfo. The SPA attaches the token of its Keycloak **public client**
+  `phonebook` (realm `cern`, silent PKCE login against the SSO identity).
+  The token is minted headlessly on first use (`BEARER_SERVICES` →
+  `phonebook_app_url`) and refreshed via `grant_type=refresh_token`
+  afterwards (verified live); the API accepts the client-scoped token
+  directly, so no RFC 8693 audience exchange entry. The resource metadata
+  advertises `tls_client_certificate_bound_access_tokens: true`, but plain
+  Bearer HTTPS calls answer 200 (mTLS binding not enforced, verified live).
+  Manual fallback: `CMCPS_PHONEBOOK_TOKEN`.
+- **Tools** (2): `phonebook_search` (1-based `page` arg mapped to the
+  0-based backend; `has_more` derived from `last`, missing `last` treated
+  as done), `phonebook_last_update`.
+- **Not implemented**: `/api/profile` (caller's own profile, not directory
+  data; write-capable route on the same path), vCard generation (client-side
+  SPA rendering, no API), office-map lookups (CERN Map tab → maps.cern.ch,
+  a separate platform out of current scope).
+- **Live verification** (SSO session): search "doebert" → 1 PERSON hit with
+  full contact record, SERVICE-type rows via "security", `lastUpdate` →
+  `2026-10-26T12:00:39.376Z`, plus forced-expiry refresh → working
+  post-refresh search.
