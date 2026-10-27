@@ -57,6 +57,14 @@ Plain `uvx cmcps` (no `--from`) resolves the name from PyPI and only works once 
 
 Note: `uvx --from <local dir>` caches the built wheel per package *version*; source changes without a version bump keep serving the old build until you run `uv cache clean cmcps` (or bump the version).
 
+#### Other relevant MCP servers to use along CmcpS
+- google_workspace_mcp (be carefull with permissions): https://github.com/taylorwilsdon/google_workspace_mcp
+- overleaf_mcp (to be enabled per project): https://github.com/mjyoo2/OverleafMCP
+- hepdata-mcp: https://github.com/HEPData/hepdata-mcp
+- draw.io-mcp (to draw diagrams): https://github.com/jgraph/drawio-mcp
+
+Having installed on the systems tools for document manipulation like pandoc, soffice, etc. would help in case you stumble upon MS office garbage.
+
 ## Auth and bootstrap tools
 
 - `cern_auth_sign_in` — opens a visible browser at the CERN account page, waits for an authenticated Keycloak identity cookie, and stores only allowlisted cookies locally. Only the login itself is visible: per-service Bearer tokens are minted lazily on first API use and cookie-only site sessions are re-warmed on demand from the stored identity. No localStorage, cookie, or token values are returned to the MCP client.
