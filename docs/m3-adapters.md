@@ -807,3 +807,70 @@ Authenticated discovery (browser network inspection) found the mechanism:
   lookups, archive root/folder/error shapes, jsonfairy TH1 content and
   unsupported-type shape, plotfairy sized PNG, placeholder plots, 401 without
   cert; `relval` samples 200.
+
+## CMS Run Registry (cmsrunregistry.web.cern.ch) — delivered
+
+- **Discovery date**: 2026-10-27 (anonymous probes, live authenticated
+  smoke/responses, and protocol confirmation against the official
+  `runregistry` PyPI client v3.1 protocol description — the adapter code is
+  clean-room; no client code is copied).
+- **Platform**: CMS Run Registry REST API under
+  `https://cmsrunregistry.web.cern.ch/api/...` serving both the certification
+  UI and programmatic clients. Filtered listings are **JSON POSTs with
+  query-by-body semantics** (read-only; routed through the allowlisted
+  `SafeHttpClient.request_json_post`, same precedent as the
+  ServiceNow/Mattermost searches): body
+  `{"page": 0, "page_size": N, "filter": {...}, "sortings": []}`. GET
+  surfaces cover the small lookup endpoints. Empty `sortings` is newest-run
+  first (verified live).
+- **Auth**: oauth2-proxy gate (Keycloak, `client_id=cmsrunregistry-sso-proxy`,
+  `/oauth2/callback`); anonymous requests 302 to auth.cern.ch on the UI and
+  every `/api/...` path (verified). Inside a valid SSO browser drive the
+  handshake is silent and plants chunked `_oauth2_proxy_<n>` cookies
+  (`cern_auth_sign_in` warms the site via the `_COOKIE_ONLY_SITES` entry —
+  `auth/browser.py:_runregistry_session_ready`; the shared client re-warms
+  once on 401/403). Verified live with the planted cookies: GET and POST
+  answer 200 JSON inline.
+- **Surfaces used**:
+  - `POST /api/runs_filtered_ordered` — run queries. Response
+    `{"runs": [...], "count": N, "pages": P}`; each item splits into
+    `oms_attributes` (fill, energy, hlt_key, l1_menu, times, lumi, ...) and
+    `rr_attributes` (class, state, significant, stop_reason), plus
+    `triplet_summary` per-component `{STATUS: count}`. Filter errors surface
+    as HTTP 200 `{"err": "..."}` — mapped to UpstreamError client-side.
+  - `POST /api/datasets_filtered_ordered` — per-run certification records
+    ("datasets": run + name like `/PromptReco/Collisions2018A/DQM`;
+    certification records, not CMS DAS datasets). Same envelope with a
+    `datasets` key; dataset name is the raw `name` filter key.
+  - `GET /api/get_all_dataset_names_of_run/{run_number}` — JSON array of the
+    dataset names recorded for a run (always includes `"online"`).
+  - `POST /api/lumisections/rr_lumisection_ranges` and
+    `POST /api/lumisections/rr_lumisection_ranges_by_component` — lumisection
+    certification `[start, end]` ranges of one dataset of one run, body
+    `{"run_number", "dataset_name"}`; the by-component variant groups the
+    same ranges under `workspace-column` keys.
+- **Filter syntax** (backend keys): `run_number` is a bare key; OMS run
+  attributes carry the `oms_attributes.` prefix, RR-owned ones
+  `rr_attributes.`; "at least one lumisection certified STATUS on
+  workspace-column" is `triplet_summary.<workspace>-<column>.<STATUS>` with
+  `{">": 0}`, STATUS in GOOD/BAD/STANDBY/EXCLUDED/NOTSET/EMPTY. Number/date
+  operators: `=`,`>`,`<`,`>=`,`<=`,`<>`, combined via
+  `{"and": [{">=": lo}, {"<=": hi}]}`; strings support `=` and `like`
+  (percent-wrapped). The adapter exposes these as typed tool arguments
+  (`run_from`/`run_to`, `class_name`, `hlt_key_contains`, `component_statuses`
+  entries like `tracker-strip:GOOD`) — component names are validated by
+  shape only (`workspace-column:STATUS`), not against a taxonomy (RR adds
+  workspaces over time).
+- **Tools** (6): `runregistry_search_runs`, `runregistry_get_run`,
+  `runregistry_list_run_datasets`, `runregistry_search_datasets`,
+  `runregistry_get_dataset`, `runregistry_get_lumisection_ranges`.
+- **Not implemented**: JSON-portal generation (`/api/json_portal/*` —
+  server-side job queue with polling, not a deterministic read),
+  `lumisections/rr_lumisections`/`oms_lumisections` per-lumisection arrays
+  (thousands of rows per long run; ranges cover the analytical need and OMS
+  data belongs to `cmsonline_*`), `cycles/global`/`datasets_accepted`
+  (no identified tool value), and every mutating route the API exposes
+  (move/signoff/mark-significant/refresh/edit — out of read-only scope).
+- **Live verification** (SSO session): dataset names of run 379611 (GET,
+  JSON), newest-first runs page with empty filter (POST, JSON), full
+  search→detail→datasets→lumisection-ranges round trip.

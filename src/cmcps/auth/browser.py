@@ -326,10 +326,29 @@ async def _mattermost_session_ready(context: BrowserContext) -> bool:
 # notes) downloaded via the ALCM "cernbox" link pattern.
 # The CMS OMS entry is needed for the cmsonline_* run/fill/lumi tools: the
 # OMS API rejects requests without its own mod_auth_openidc session.
+async def _runregistry_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds a session on cmsrunregistry.web.cern.ch.
+
+    The CMS Run Registry (UI and ``/api/...``) sits behind an oauth2-proxy
+    gate (``client_id=cmsrunregistry-sso-proxy``, ``/oauth2/callback``);
+    inside an SSO context the handshake is silent and drops the chunked
+    ``_oauth2_proxy_<n>`` session cookies the API accepts. Verified 2026-10:
+    a stored set answers the runregistry_* tools' GET/POST APIs directly.
+    """
+    try:
+        cookies = await context.cookies("https://cmsrunregistry.web.cern.ch")
+    except PlaywrightError:
+        return False
+    return any(cookie.get("name", "").startswith("_oauth2_proxy") for cookie in cookies)
+
+
 # The Mattermost entry starts at its oauth/gitlab/login route (the web-app
 # login button target): unauthenticated visitors of / only get an SPA login
 # page with a click-through button, while the OAuth route walks straight
 # through mm-auth.web.cern.ch → auth.cern.ch and drops MMAUTHTOKEN.
+# The Run Registry entry plants the chunked _oauth2_proxy_<n> cookies so the
+# runregistry_* tools' JSON-POST queries reach the API without re-walking
+# the oauth2-proxy redirect handshake per call.
 _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], ...] = (
     ("https://cms-talk.web.cern.ch", None, None),
     ("https://cms-pub-talk.web.cern.ch", None, None),
@@ -339,6 +358,7 @@ _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], 
     ("https://cms-alcm.web.cern.ch/", None, _cms_alcm_session_ready),
     (SERVICENOW_SITE_URL, None, _servicenow_session_ready),
     ("https://cmsoms.cern.ch/", None, _cmsoms_session_ready),
+    ("https://cmsrunregistry.web.cern.ch/", None, _runregistry_session_ready),
     (
         "https://mattermost.web.cern.ch/oauth/gitlab/login",
         None,

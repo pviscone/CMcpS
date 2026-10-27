@@ -397,6 +397,17 @@ Service-Portal search and Knowledge-Base article retrieval for the CERN IT servi
 - `servicenow_search_kb` — the same search restricted to the Knowledge Base (`sources=["kb"]`).
 - `servicenow_get_kb_article` — full KB article by number (`KB0000705`) or 32-hex `sys_id` from search results: title, summary, keywords, category label + full path (resolved via `kb_category`), published/updated dates, helpful count, portal URL, and the body as plain text (HTML stripped, 20k character cap). Records are fetched via exact-key JSONv2 lookup; JSONv2 ignores `sysparm_fields`/`sysparm_limit`, so keyed lookups are the only size-safe pattern there.
 
+## CMS Run Registry tools (cmsrunregistry.web.cern.ch)
+
+Data-certification queries against the Run Registry (RR): which runs are significant/certified, per-run component lumisection statuses, and the certification "datasets" (run + `/Era/Type/DQM` records) behind golden-JSON production. Auth: the site and `/api/...` sit behind an oauth2-proxy gate (Keycloak, `cmsrunregistry-sso-proxy`); `cern_auth_sign_in` plants the chunked `_oauth2_proxy_<n>` cookies via a headless warm (kept fresh on 401/403). The filtered listing endpoints are JSON POSTs with query-by-body semantics (read-only; routed through the allowlisted `SafeHttpClient.request_json_post`, same precedent as ServiceNow/Mattermost searches). Beam rates and exact luminosity belong to OMS — use the `cmsonline_*` tools; RR "datasets" are certification records, not CMS DAS datasets (`das_search`).
+
+- `runregistry_search_runs` — runs with certification filters: `run_number` or `run_from`/`run_to`, `fill_number`, `significant`, `class_name`, `hlt_key_contains`, and `component_statuses=['tracker-strip:GOOD', ...]` (runs having at least one lumisection with that component status). Items carry `oms_attributes`, `rr_attributes`, and `triplet_summary` counts; newest first, 0-based `page`/`page_size` (≤250).
+- `runregistry_get_run` — full record of one run.
+- `runregistry_list_run_datasets` — dataset names recorded for a run (`online` plus e.g. `/PromptReco/Collisions2026A/DQM`); these name the records accepted by the two dataset tools.
+- `runregistry_search_datasets` — certification records by run number/range, `dataset_name_contains` (like-match), and component statuses.
+- `runregistry_get_dataset` — one certification record by run + exact dataset name (workspace offline states `dt_state`/`global_state`/… plus triplet counts).
+- `runregistry_get_lumisection_ranges` — lumisection certification `[start, end]` ranges of one dataset of one run (`dataset_name='online'` default) with per-component status/comment/cause; `by_component=true` groups the ranges per `workspace-column` key.
+
 ## Configuration
 
 Configuration uses environment variables with the `CMCPS_` prefix. Common settings:

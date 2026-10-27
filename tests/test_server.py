@@ -216,6 +216,14 @@ SERVICENOW_TOOLS = {
     "servicenow_search_kb",
     "servicenow_get_kb_article",
 }
+RUNREGISTRY_TOOLS = {
+    "runregistry_search_runs",
+    "runregistry_get_run",
+    "runregistry_list_run_datasets",
+    "runregistry_search_datasets",
+    "runregistry_get_dataset",
+    "runregistry_get_lumisection_ranges",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -246,6 +254,7 @@ ALL_TOOLS = (
     | HYPERNEWS_TOOLS
     | WEBSITES_TOOLS
     | SERVICENOW_TOOLS
+    | RUNREGISTRY_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
@@ -309,6 +318,12 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     "cmsonline_get_run": {"run_number": 1},
     "cmsonline_list_fills": {},
     "cmsonline_list_lumisections": {"run_number": 1},
+    "runregistry_search_runs": {},
+    "runregistry_get_run": {"run_number": 1},
+    "runregistry_list_run_datasets": {"run_number": 1},
+    "runregistry_search_datasets": {},
+    "runregistry_get_dataset": {"run_number": 1, "dataset_name": "online"},
+    "runregistry_get_lumisection_ranges": {"run_number": 1},
     "jira_search": {"jql": "project = CMSTRACK"},
     "jira_get_issue": {"issue_key": "CMSTRACK-1"},
     "jira_get_project": {"project_key": "CMSTRACK"},
