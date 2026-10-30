@@ -58,12 +58,25 @@ def json_body(response: SafeResponse, *, source: str) -> Any:
     try:
         return json.loads(response.content.decode("utf-8", errors="replace"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        snippet = " ".join(
+            response.content[:_ERROR_DETAIL_LIMIT].decode("utf-8", errors="replace").split()
+        )
+        looks_like_html = response.content.lstrip().lower().startswith((b"<!doctype", b"<html"))
+        if looks_like_html or "json" not in content_type.lower():
+            instructions = (
+                "The service answered with a non-JSON page, likely an "
+                "interactive authentication or error page. Sign in with "
+                "cern_auth_sign_in and retry."
+            )
+        else:
+            instructions = (
+                "The service declared JSON but sent an unparseable body; "
+                "retry. If it persists, report it with the body snippet."
+            )
         raise UpstreamError(
-            f"{source} returned a non-JSON body (content-type: {content_type or 'unknown'})",
-            instructions=(
-                "The service may require interactive browser authentication. "
-                "Sign in with cern_auth_sign_in and retry."
-            ),
+            f"{source} returned a body that could not be parsed as JSON "
+            f"(content-type: {content_type or 'unknown'}): {snippet!r}",
+            instructions=instructions,
         ) from exc
 
 

@@ -364,7 +364,18 @@ Authenticated discovery (browser network inspection) found the mechanism:
   `/alcm/api/attachments/{documents,gitlab-repositories,indico-contributions,
   paths}/entity/{id}` (+`/alcm/api/attachments/tags`),
   `/alcm/api/hashtags/entity/{id}`; per-related-note documents are fetched
-  via `/alcm/api/attachments/documents/entity/{note_id}`. The page's "Pubtalk
+  via `/alcm/api/attachments/documents/entity/{note_id}`. Standalone-note
+  endpoints (recovered from the ALCM SPA bundle `app.*.js`, verified live on
+  a conference report): `/alcm/api/notes/{note_id}/history`
+  (note/observer/project update rows — rows can carry editor `comments`),
+  and the same entity-keyed `transitions/{note_id}` (workflow tracker:
+  current/target stage, entryConditions, pastEvents) and
+  `attachments/documents/entity/{note_id}` — the only way to reach
+  attachments of notes that live outside an analysis, which
+  `glance_get_note` composes. `glance_download_attachment` falls back from
+  a numeric analysis id to a standalone-note id on 404, and percent-encodes
+  the `ancode` path segment (codes such as `CMS CR-2026/251` break the path
+  unencoded). The page's "Pubtalk
   Forum" and "Public
   Result" links are pure client-side derivations —
   `https://cms-pub-talk.web.cern.ch/c/{WG}/{paperIdentifier}` and

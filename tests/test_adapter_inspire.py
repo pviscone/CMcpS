@@ -494,14 +494,17 @@ async def test_http_429_raises_retryable_upstream(tmp_path: Path) -> None:
 
 
 async def test_non_json_body_raises_upstream(tmp_path: Path) -> None:
+    """An HTML page where JSON was expected keeps the interactive-auth hint."""
     recorder = Recorder(
         lambda _: httpx.Response(
             200, content=b"<html>sign in</html>", headers={"content-type": "text/html"}
         )
     )
     settings, client = make_client(tmp_path, recorder)
-    with pytest.raises(UpstreamError):
+    with pytest.raises(UpstreamError) as caught:
         await inspire.search_papers(client, settings, query="x")
+    assert "could not be parsed as JSON" in caught.value.message
+    assert "cern_auth_sign_in" in (caught.value.instructions or "")
 
 
 async def test_server_error_raises_retryable_upstream(tmp_path: Path) -> None:

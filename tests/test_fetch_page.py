@@ -35,12 +35,14 @@ class _FakePage:
         title: str = "Title",
         redirect: str | None = None,
         fail_goto: bool = False,
+        fail_goto_message: str = "navigation failed",
     ) -> None:
         self._texts = iter(texts)
         self._last = texts[-1] if texts else ""
         self._title = title
         self._redirect = redirect
         self._fail_goto = fail_goto
+        self._fail_goto_message = fail_goto_message
         self.url = "https://app.cern.ch/page"
 
     def is_closed(self) -> bool:
@@ -48,7 +50,7 @@ class _FakePage:
 
     async def goto(self, url: str, wait_until: str, timeout: int) -> None:
         if self._fail_goto:
-            raise PlaywrightError("navigation failed")
+            raise PlaywrightError(self._fail_goto_message)
         self.last_goto = (url, wait_until, timeout)
         self.url = self._redirect or url
 
@@ -63,10 +65,34 @@ class _FakePage:
         return self._title
 
 
+class _FakeAPIResponse:
+    """Stand-in for the Playwright APIRequestContext response."""
+
+    def __init__(self, url: str, content_type: str) -> None:
+        self.url = url
+        self.headers = {"content-type": content_type}
+
+
+class _FakeRequest:
+    def __init__(self, response: _FakeAPIResponse | None) -> None:
+        self._response = response
+
+    async def get(self, _url: str) -> _FakeAPIResponse:
+        if self._response is None:
+            raise PlaywrightError("api request failed")
+        return self._response
+
+
 class _FakeContext:
-    def __init__(self, page: _FakePage, state: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        page: _FakePage,
+        state: dict[str, Any],
+        probe_response: _FakeAPIResponse | None = None,
+    ) -> None:
         self._page = page
         self._state = state
+        self.request = _FakeRequest(probe_response)
 
     async def new_page(self) -> _FakePage:
         return self._page
@@ -89,8 +115,13 @@ class _FakeBrowser:
         return None
 
 
-def _patch_playwright(monkeypatch: Any, page: _FakePage, state: dict[str, Any]) -> None:
-    fake_browser = _FakeBrowser(_FakeContext(page, state))
+def _patch_playwright(
+    monkeypatch: Any,
+    page: _FakePage,
+    state: dict[str, Any],
+    probe_response: _FakeAPIResponse | None = None,
+) -> None:
+    fake_browser = _FakeBrowser(_FakeContext(page, state, probe_response))
 
     class _PlaywrightCM:
         async def __aenter__(self) -> None:
@@ -173,6 +204,49 @@ async def test_fetch_page_text_flags_auth_divert(monkeypatch, tmp_path: Path) ->
 
 async def test_fetch_page_text_goto_failure_returns_none(monkeypatch, tmp_path: Path) -> None:
     _patch_playwright(monkeypatch, _FakePage(["x"], fail_goto=True), {"cookies": [], "origins": []})
+    result = await fetch_page_text(
+        _settings(tmp_path), {"cookies": [], "origins": []}, "https://app.cern.ch/page", None, 5
+    )
+    assert result is None
+
+
+async def test_fetch_page_text_pdf_abort_reports_binary(monkeypatch, tmp_path: Path) -> None:
+    """A navigation aborted by a binary download yields a binary payload, not None."""
+    probe = _FakeAPIResponse("https://cms-alcm.web.cern.ch/notes/x/v4.pdf", "application/pdf")
+    _patch_playwright(
+        monkeypatch,
+        _FakePage(
+            ["x"], fail_goto=True, fail_goto_message="Page.goto: net::ERR_ABORTED at https://x"
+        ),
+        {"cookies": [], "origins": []},
+        probe,
+    )
+    result = await fetch_page_text(
+        _settings(tmp_path),
+        {"cookies": [], "origins": []},
+        "https://cms-alcm.web.cern.ch/notes/x/v4.pdf",
+        None,
+        5,
+    )
+    assert result is not None
+    payload, _ = result
+    assert payload["content_kind"] == "binary"
+    assert payload["content_type"] == "application/pdf"
+    assert payload["text"] == ""
+    assert payload["auth_divert"] is False
+
+
+async def test_fetch_page_text_abort_landing_on_login_returns_none(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """ERR_ABORTED from an interrupted SSO redirect keeps the stale-session report."""
+    probe = _FakeAPIResponse("https://auth.cern.ch/auth/realms/cern/login", "text/html")
+    _patch_playwright(
+        monkeypatch,
+        _FakePage(["x"], fail_goto=True, fail_goto_message="Page.goto: net::ERR_ABORTED"),
+        {"cookies": [], "origins": []},
+        probe,
+    )
     result = await fetch_page_text(
         _settings(tmp_path), {"cookies": [], "origins": []}, "https://app.cern.ch/page", None, 5
     )
@@ -300,3 +374,64 @@ async def test_cern_fetch_page_success(
     assert data["marker_found"] is True
     assert data["auth_divert"] is False
     assert data["truncated"] is False
+
+
+async def test_cern_fetch_page_binary_points_to_download_tool(
+    settings: Settings, valid_storage_state: dict[str, Any]
+) -> None:
+    """Binary URLs surface a targeted error, not the stale-session hint."""
+
+    async def binary_fetcher(
+        _settings: Settings, _state: object, url: str, _wait_for: str | None, _timeout: int
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        state = {"cookies": [], "origins": []}
+        return (
+            {
+                "url": url,
+                "final_url": url,
+                "title": None,
+                "text": "",
+                "marker_found": None,
+                "auth_divert": False,
+                "content_kind": "binary",
+                "content_type": "application/pdf",
+            },
+            state,
+        )
+
+    auth = AuthService(settings, page_fetcher=binary_fetcher)
+    auth.store.save(valid_storage_state)
+    server = build_server(settings, auth_service=auth)
+    result = await server.call_tool(
+        "cern_fetch_page", {"url": "https://cms-alcm.web.cern.ch/notes/x/v4.pdf"}
+    )
+    payload = result.structured_content
+    assert payload is not None
+    assert payload["status"] == "error"
+    assert payload["error"]["code"] == "UPSTREAM_ERROR"
+    assert "application/pdf" in payload["error"]["message"]
+    assert payload["error"]["instructions"].find("cern_download_file") >= 0
+    assert "SSO session may be stale" not in payload["error"]["instructions"]
+
+
+async def test_cern_download_file_requires_sso(settings: Settings) -> None:
+    server = build_server(settings)
+    result = await server.call_tool(
+        "cern_download_file", {"url": "https://service.cern.ch/file.pdf"}
+    )
+    payload = result.structured_content
+    assert payload is not None
+    assert payload["status"] == "error"
+    assert payload["error"]["code"] == "AUTH_REQUIRED"
+
+
+async def test_cern_download_file_rejects_path_filename(settings: Settings) -> None:
+    server = build_server(settings)
+    result = await server.call_tool(
+        "cern_download_file",
+        {"url": "https://service.cern.ch/file.pdf", "filename": "../evil.pdf"},
+    )
+    payload = result.structured_content
+    assert payload is not None
+    assert payload["status"] == "error"
+    assert payload["error"]["code"] == "INVALID_INPUT"

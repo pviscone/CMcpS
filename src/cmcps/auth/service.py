@@ -42,6 +42,7 @@ from cmcps.contracts.errors import (
     InvalidSessionError,
     PolicyViolationError,
     SessionStoreError,
+    UpstreamError,
 )
 from cmcps.contracts.results import SessionMetadata, SignInResult
 from cmcps.net.safety import host_matches, validate_url
@@ -527,8 +528,10 @@ class AuthService:
         """Return a valid Bearer access token for an allowlisted service.
 
         Loads the captured token set, refreshes it through the stored
-        Keycloak token endpoint when expired, and persists refreshes. Returns
-        ``None`` when no token was captured for the service.
+        Keycloak token endpoint when expired, and persists refreshes. A
+        record whose refresh fails (expired refresh window, revoked grant)
+        is discarded and re-minted headlessly from the stored SSO identity.
+        Returns ``None`` when no token can be captured for the service.
         """
         if service not in BEARER_SERVICES:
             raise InvalidInputError(
@@ -542,10 +545,29 @@ class AuthService:
             return None
         if record.access_valid():
             return record.access_token
-        refreshed = await refresh_record(self.settings, record)
-        exchange_audience = BEARER_SERVICE_EXCHANGE_AUDIENCES.get(service)
-        if exchange_audience is not None:
-            refreshed = await exchange_for_audience(self.settings, refreshed, exchange_audience)
+        try:
+            refreshed = await refresh_record(self.settings, record)
+            exchange_audience = BEARER_SERVICE_EXCHANGE_AUDIENCES.get(service)
+            if exchange_audience is not None:
+                refreshed = await exchange_for_audience(self.settings, refreshed, exchange_audience)
+        except UpstreamError as exc:
+            # The stored record is unusable (expired beyond the refresh window
+            # or revoked). A repeated cern_auth_sign_in keeps reusing the valid
+            # SSO session and never re-captures service tokens, so discard the
+            # dead record and re-mint headlessly from the stored identity
+            # instead of sending the user back to the browser.
+            logger.info("Bearer refresh failed for %s; re-minting", service)
+            self.service_token_store().clear(service)
+            refreshed = await self._mint_service_token(service)
+            if refreshed is None or not refreshed.access_valid():
+                raise UpstreamError(
+                    f"the {service} token could not be refreshed or re-minted",
+                    instructions=(
+                        f"The refresh failed ({exc.message}) and no fresh token "
+                        "could be captured from the stored SSO session. "
+                        "Call cern_auth_reauthenticate to sign in again."
+                    ),
+                ) from exc
         self.service_token_store().save(refreshed)
         return refreshed.access_token
 

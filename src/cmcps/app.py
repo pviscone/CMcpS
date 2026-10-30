@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
@@ -22,7 +23,7 @@ from cmcps.config.settings import (
     Settings,
     get_settings,
 )
-from cmcps.contracts.errors import CMCPSError, UpstreamError
+from cmcps.contracts.errors import CMCPSError, InvalidInputError, UpstreamError
 from cmcps.contracts.results import (
     ErrorCode,
     ErrorPayload,
@@ -75,12 +76,45 @@ async def _cern_fetch_page_payload(
                     "cern_auth_sign_in."
                 ),
             )
+        if payload.get("content_kind") == "binary":
+            raise UpstreamError(
+                "the URL serves a binary file "
+                f"({payload.get('content_type') or 'unknown content type'}), "
+                "not a renderable page",
+                instructions="Download it with cern_download_file instead.",
+            )
         return ToolEnvelope.success(PageFetchResult(**payload, marker=wait_for))
     except Exception as exc:
         return _failure(exc)
 
 
-def build_server(
+async def _cern_download_file_payload(
+    http: SafeHttpClient,
+    *,
+    url: str,
+    filename: str | None,
+) -> ToolEnvelope:
+    """Handler for the cern_download_file tool (kept out of build_server)."""
+    try:
+        destination: Path | None = None
+        if filename is not None:
+            cleaned = filename.strip()
+            if not cleaned or Path(cleaned).name != cleaned:
+                raise InvalidInputError(
+                    "filename must be a plain file name, not a path",
+                    instructions="Pass e.g. 'CR2026_251_v4.pdf'; the download "
+                    "directory is fixed to CMcpS storage.",
+                )
+            destination = Path(cleaned)
+        final = await http.download(url, destination)
+        return ToolEnvelope.success(
+            {"url": url, "path": str(final), "size_bytes": final.stat().st_size}
+        )
+    except Exception as exc:
+        return _failure(exc)
+
+
+def build_server(  # noqa: C901 - per-tool registration blocks dominate the branch count
     settings: Settings | None = None,
     *,
     auth_service: AuthService | None = None,
@@ -256,6 +290,34 @@ def build_server(
         )
 
     http = SafeHttpClient(runtime_settings, auth_service=runtime_auth)
+
+    @server.tool(
+        name="cern_download_file",
+        description=(
+            "Download one file (PDF, plot, archive, ...) hosted on an allowlisted "
+            "CERN site into local CMcpS download storage through the stored SSO "
+            "session, with cookies re-scoped on every redirect hop. Use it when "
+            "cern_fetch_page reports the URL serves a binary file instead of a "
+            "renderable page. Returns the local path and size; the file content "
+            "is never inlined."
+        ),
+    )
+    async def cern_download_file(
+        url: Annotated[
+            str,
+            Field(description="File URL; must pass the CERN host allowlist."),
+        ],
+        filename: Annotated[
+            str | None,
+            Field(
+                description="Optional destination file name (a plain name, not a "
+                "path); defaults to the server-provided name."
+            ),
+        ] = None,
+    ) -> ToolEnvelope:
+        """Download one CERN-hosted file through the SSO session."""
+        return await _cern_download_file_payload(http, url=url, filename=filename)
+
     register_adapter_tools(server, runtime_settings, runtime_auth, http)
 
     return server

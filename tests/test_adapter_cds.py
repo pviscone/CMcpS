@@ -260,8 +260,26 @@ async def test_non_json_body_raises_upstream(tmp_path: Path) -> None:
         )
     )
     settings, client = make_client(tmp_path, recorder)
-    with pytest.raises(UpstreamError):
+    with pytest.raises(UpstreamError) as caught:
         await cds.search(client, settings, query="Higgs")
+    # A declared-JSON-but-unparseable body must not be called "non-JSON" or
+    # blamed on authentication; the message carries a body snippet instead.
+    assert "could not be parsed as JSON" in caught.value.message
+    assert "not json at all" in caught.value.message
+    assert "cern_auth_sign_in" not in (caught.value.instructions or "")
+
+
+async def test_html_error_page_keeps_sso_hint(tmp_path: Path) -> None:
+    recorder = Recorder(
+        lambda _: httpx.Response(
+            200, content=b"<!DOCTYPE html><html>login</html>", headers={"content-type": "text/html"}
+        )
+    )
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as caught:
+        await cds.search(client, settings, query="Higgs")
+    assert "HTML page" in caught.value.message
+    assert "cern_auth_sign_in" in (caught.value.instructions or "")
 
 
 async def test_all_requests_are_get(tmp_path: Path) -> None:

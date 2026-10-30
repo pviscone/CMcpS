@@ -693,6 +693,53 @@ async def _poll_body_text(
     return text, False
 
 
+_NAVIGATION_ABORT_MARKERS = ("Download is starting", "ERR_ABORTED")
+_TEXTUAL_CONTENT_PREFIXES = (
+    "text/",
+    "application/json",
+    "application/xml",
+    "application/javascript",
+    "application/xhtml",
+    "image/svg",
+)
+
+
+async def _binary_download_payload(
+    context: BrowserContext, url: str, navigation_error: str
+) -> dict[str, Any] | None:
+    """Detect a navigation that failed because the URL serves a binary file.
+
+    Chromium aborts navigations to non-renderable content (PDFs, archives)
+    with "Download is starting" or ``net::ERR_ABORTED``; the same abort code
+    appears for interrupted redirects, so binary is reported only when a
+    follow-up request — sharing the context cookie jar, SSO redirects
+    included — answers with a clearly non-textual content type. When the
+    request chain lands on an HTML login page instead, ``None`` lets the
+    caller report the real cause (stale session) rather than "binary".
+    """
+    if not any(marker in navigation_error for marker in _NAVIGATION_ABORT_MARKERS):
+        return None
+    try:
+        response = await context.request.get(url)
+    except PlaywrightError:
+        return None
+    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+    if not content_type or any(
+        content_type.startswith(prefix) for prefix in _TEXTUAL_CONTENT_PREFIXES
+    ):
+        return None
+    return {
+        "url": url,
+        "final_url": response.url,
+        "title": None,
+        "text": "",
+        "marker_found": None,
+        "auth_divert": False,
+        "content_kind": "binary",
+        "content_type": content_type,
+    }
+
+
 async def fetch_page_text(
     settings: Settings,
     storage_state: dict[str, Any],
@@ -709,7 +756,11 @@ async def fetch_page_text(
     appears, or — without a marker — until the text stops changing. Returns
     ``(payload, refreshed_storage_state)`` or ``None`` when the page failed
     to load. The payload carries ``auth_divert=True`` when the final URL
-    landed on an authentication host, signalling a stale session.
+    landed on an authentication host, signalling a stale session, and
+    ``content_kind="binary"`` (with ``content_type``) when the URL serves a
+    non-renderable file instead of a page — the abort-code ambiguity with
+    interrupted redirects is resolved by re-requesting the URL through the
+    context cookie jar, so an SSO login page keeps the stale-session report.
     """
     marker = wait_for.casefold() if wait_for else None
     deadline = asyncio.get_running_loop().time() + timeout_seconds
@@ -726,7 +777,10 @@ async def fetch_page_text(
                     wait_until="domcontentloaded",
                     timeout=min(30_000, timeout_seconds * 1000),
                 )
-            except PlaywrightError:
+            except PlaywrightError as exc:
+                binary = await _binary_download_payload(context, url, str(exc))
+                if binary is not None:
+                    return binary, await context.storage_state()
                 logger.debug("Fetch-page load failed for %s", url)
                 return None
             text, found = await _poll_body_text(

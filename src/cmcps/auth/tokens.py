@@ -214,7 +214,10 @@ async def refresh_record(
     if not record.refresh_valid():
         raise UpstreamError(
             f"the captured {record.service} token and refresh token are expired",
-            instructions="Call cern_auth_sign_in again to recapture fresh credentials.",
+            instructions=(
+                "The caller re-mints the token headlessly from the stored SSO "
+                "session; if that keeps failing, call cern_auth_reauthenticate."
+            ),
         )
     endpoint = validate_url(record.token_endpoint, allowed_hosts=settings.allowed_hosts)
     parsed = urlsplit(endpoint)

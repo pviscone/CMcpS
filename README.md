@@ -71,7 +71,8 @@ Having installed on the systems tools for document manipulation like pandoc, sof
 - `cern_auth_status` — reports whether a usable session is stored, its expiry when known, and safe metadata such as the credential filename. Call this first when troubleshooting authentication.
 - `cern_auth_reauthenticate` — discards the stored session cookies and captured service Bearer tokens, then runs a fresh visible-browser sign-in. Use when `cern_auth_sign_in` keeps reusing a broken session.
 - `cern_health` — protected smoke tool proving the authentication guard, read-only safety policy, and server wiring after sign-in.
-- `cern_fetch_page` — renders one SSO-protected page in a headless browser through the stored session and returns its visible text. Covers cookie-based sites and Keycloak-PKCE single-page apps whose token exchange completes silently (plain GET-based tools cannot read either). `wait_for` waits for a case-insensitive substring before returning (use for SPA content); `auth_divert=true` in the result means the page landed on the SSO login and the stored session needs a fresh `cern_auth_sign_in`.
+- `cern_fetch_page` — renders one SSO-protected page in a headless browser through the stored session and returns its visible text. Covers cookie-based sites and Keycloak-PKCE single-page apps whose token exchange completes silently (plain GET-based tools cannot read either). `wait_for` waits for a case-insensitive substring before returning (use for SPA content); `auth_divert=true` in the result means the page landed on the SSO login and the stored session needs a fresh `cern_auth_sign_in`. URLs that serve binary files (PDFs, archives) are detected — Chromium aborts their navigation — and reported with a pointer to `cern_download_file` instead of a misleading stale-session hint.
+- `cern_download_file` — downloads one file hosted on an allowlisted CERN site into CMcpS download storage through the stored SSO session (cookies re-scoped per redirect hop), returning the local path and size; use it for the binary URLs `cern_fetch_page` cannot render.
 
 MCP does not guarantee client-side call order, so CMcpS enforces authentication server-side. Every adapter tool returns a structured `AUTH_REQUIRED` result until `cern_auth_sign_in` completes.
 
@@ -320,12 +321,12 @@ Tokens are **minted lazily on first API use**: the call re-opens the app root he
 - `glance_list_published_analyses` — published analyses; filters incl. `has_arxiv`.
 - `glance_list_note_types` — note types (Analysis Note, Conference Report, …).
 - `glance_search_notes` — search notes by `title_contains`/`working_group`/`type_name`/`project`. The upstream index is one ~15 MB payload fetched in full per call: raise `CMCPS_MAX_RESPONSE_BYTES` above ~16 MB to use it (documented in the tool description; no silent truncation).
-- `glance_get_note` — note detail by numeric id.
+- `glance_get_note` — note detail by numeric id, composed with the note's attachments (`attachments.documents[].versions`), workflow tracker (`transitions/{note_id}`), and update history (`notes/{note_id}/history` — rows can carry editor comments).
 - `glance_list_projects` — ALCM projects with e-groups.
 - `glance_list_alcm_working_groups` — working groups, `kind=physics|non-physics|all`.
 - `glance_alcm_members` — ALCM member roster, substring name filter.
 - `glance_membership_search_members` — CMS member search by name (`query` required), paginated client-side.
-- `glance_download_attachment` — download one GLANCE attachment version (PAPER/PAS drafts, analysis-note PDFs, CWR documents) into CMcpS storage by exact version `filename` (e.g. `HIG-23-004-paper-v10.pdf`). The files are served from `cms-alcm.web.cern.ch` behind SSO **session cookies** (not Bearer tokens): the sign-in cookie capture includes that host, and an HTML login page is detected and reported instead of being saved as a file.
+- `glance_download_attachment` — download one GLANCE attachment version (PAPER/PAS drafts, analysis-note PDFs, CWR documents) into CMcpS storage by exact version `filename` (e.g. `HIG-23-004-paper-v10.pdf`). `analysis` accepts codes with slashes (`CMS CR-2026/251`, percent-encoded into the `ancode` path segment) and, for a numeric value that is not an analysis id, falls back to the standalone-note id — note attachments download the same way via `attachments/documents/entity/{note_id}`. The files are served from `cms-alcm.web.cern.ch` behind SSO **session cookies** (not Bearer tokens): the sign-in cookie capture includes that host, and an HTML login page is detected and reported instead of being saved as a file.
 
 ## CMS DocDB tools (cms-docdb.cern.ch)
 

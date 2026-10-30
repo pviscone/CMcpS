@@ -16,6 +16,7 @@ BOOTSTRAP_TOOLS = {
     "cern_auth_status",
     "cern_health",
     "cern_fetch_page",
+    "cern_download_file",
 }
 INDICO_TOOLS = {
     "indico_get_user_info",

@@ -39,6 +39,14 @@ endpoints ``analysis/{id}/{paper,review-committee,history}``,
 indico-contributions,paths}/entity/{id}``, ``hashtags/entity/{id}``. The
 incubator SPA exposes nothing useful read-only and is not implemented.
 
+Standalone-note endpoints (recovered from the ALCM SPA bundle, verified
+live): ``GET /alcm/api/notes/{id}/history`` — note/observer/project update
+rows — and the shared entity-keyed endpoints ``transitions/{note_id}`` and
+``attachments/documents/entity/{note_id}``, which is the only way to reach
+attachments of notes that live outside an analysis (e.g. conference
+reports). Analysis codes with slashes (``CMS CR-2026/251``) are
+percent-encoded into the single ``ancode`` path segment.
+
 Size note: the notes index (~15 MB) exceeds the default
 ``CMCPS_MAX_RESPONSE_BYTES`` (10 MB); raise it (e.g. to 20 MB) to use
 ``glance_search_notes``. The payload is fetched in full on each call and
@@ -53,6 +61,7 @@ import re
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
 from cmcps.adapters.common import json_body
 from cmcps.config.settings import Settings
@@ -63,6 +72,7 @@ from cmcps.net.client import SafeHttpClient
 SOURCE = "glance"
 
 _UNAUTHORIZED = {401, 403}
+_NOT_FOUND = 404
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 100
 _MAX_QUERY_LEN = 200
@@ -706,20 +716,79 @@ async def get_analysis(
     }
 
 
-async def get_note(client: SafeHttpClient, settings: Settings, *, note_id: int) -> dict[str, Any]:
-    """Full detail of one ALCM note by numeric id."""
-    if note_id < 1:
-        raise InvalidInputError("note_id must be a positive integer")
+async def _resolve_note(client: SafeHttpClient, settings: Settings, note_id: int) -> dict[str, Any]:
+    """Fetch one ALCM note record by numeric id or raise a structured error."""
     payload = await _app_get(
         client, settings, "alcm", f"notes/{note_id}", source=f"glance alcm note {note_id}"
     )
     note = payload.get("note") if isinstance(payload, dict) else None
-    if not isinstance(note, dict):
+    if not isinstance(note, dict) or not isinstance(note.get("id"), int):
         raise UpstreamError(
             f"GLANCE ALCM returned no note for id {note_id}",
             instructions="Check the id via glance_search_notes.",
         )
-    return {"source": SOURCE, "note_id": note_id, "note": note}
+    return note
+
+
+async def get_note(client: SafeHttpClient, settings: Settings, *, note_id: int) -> dict[str, Any]:
+    """Full detail of one ALCM note by numeric id.
+
+    Besides the ``notes/{id}`` record this composes the note's own support
+    endpoints, all verified live against the ALCM standalone-note page:
+
+    - ``attachments/documents/entity/{note_id}`` — the note's document/attachment
+      store (same endpoint the analysis page uses for related notes); the only
+      way to reach attachments of standalone notes (e.g. conference reports).
+    - ``transitions/{note_id}`` — the workflow tracker (current/target stage,
+      entryConditions, pastEvents); transitions are keyed by entity id and
+      cover notes and analyses alike.
+    - ``notes/{note_id}/history`` — note/observer/project update rows (agent,
+      dates, old/new values); rows can carry editor ``comments``.
+
+    A section holding ``{'error': ...}`` marks one support endpoint that
+    failed.
+    """
+    if note_id < 1:
+        raise InvalidInputError("note_id must be a positive integer")
+    note = await _resolve_note(client, settings, note_id)
+
+    async def _fetch(name: str, endpoint: str) -> Any:
+        try:
+            return await _app_get(
+                client, settings, "alcm", endpoint, source=f"glance alcm {name} {note_id}"
+            )
+        except UpstreamError as exc:
+            return {"error": f"{name} unavailable: {exc.message}"}
+
+    def _section(payload: Any, key: str) -> Any:
+        if not isinstance(payload, dict):
+            return payload
+        if "error" in payload:
+            return payload
+        return payload.get(key)
+
+    documents, transitions, history = await asyncio.gather(
+        _fetch("note documents", f"attachments/documents/entity/{note_id}"),
+        _fetch("transitions", f"transitions/{note_id}"),
+        _fetch("note history", f"notes/{note_id}/history"),
+    )
+    return {
+        "source": SOURCE,
+        "note_id": note_id,
+        "note": note,
+        "workflow": _section(transitions, "transition"),
+        "history": _section(history, "history"),
+        "attachments": {"documents": _section(documents, "documents")},
+        "explanation": (
+            "attachments.documents[].versions lists every uploaded version; "
+            "pass a version name (or fileName.fileExtension) to "
+            "glance_download_attachment with analysis=str(note_id); workflow "
+            "is the transition tracker (current/target stage, entryConditions, "
+            "pastEvents); history rows (noteUpdates, observerUpdates, "
+            "projectUpdates) record field changes and can carry editor "
+            "comments."
+        ),
+    }
 
 
 async def list_projects(client: SafeHttpClient, settings: Settings) -> dict[str, Any]:
@@ -864,7 +933,14 @@ def _cernbox_link(file_path: str, file_name: str, file_extension: str) -> str:
 async def _resolve_analysis(
     client: SafeHttpClient, settings: Settings, code_or_id: str
 ) -> dict[str, Any]:
-    path = f"analysis/{code_or_id}" if code_or_id.isdigit() else f"analysis/ancode/{code_or_id}"
+    # Analysis codes can embed spaces and slashes (e.g. conference-report
+    # codes like "CMS CR-2026/251"); the ancode lookup is a single path
+    # segment, so encode it or the slash silently changes the route.
+    path = (
+        f"analysis/{code_or_id}"
+        if code_or_id.isdigit()
+        else f"analysis/ancode/{quote(code_or_id, safe='')}"
+    )
     payload = await _app_get(
         client, settings, "alcm", path, source=f"glance alcm analysis {code_or_id}"
     )
@@ -913,9 +989,12 @@ def _match_version(documents_payloads: list[Any], filename: str, code_or_id: str
     matches = _collect_matches(documents_payloads, filename)
     if not matches:
         raise InvalidInputError(
-            f"No attachment version named {filename!r} on analysis {code_or_id}",
-            instructions="List versions with glance_get_analysis "
-            "(attachments.documents[].versions).",
+            f"No attachment version named {filename!r} for {code_or_id}",
+            instructions=(
+                "List versions with glance_get_analysis "
+                "(attachments.documents[].versions) or, for a standalone note, "
+                "with glance_get_note."
+            ),
         )
     if len(matches) > 1:
         raise InvalidInputError(
@@ -941,10 +1020,35 @@ def _login_page_saved(final: Path) -> bool:
     return head.lstrip().lower().startswith(_LOGIN_HTML_MARKERS)
 
 
+async def _download_entity_ids(
+    client: SafeHttpClient, settings: Settings, code_or_id: str
+) -> tuple[list[int], dict[str, Any] | None]:
+    """Resolve the document-store entity ids behind one analysis or note selector.
+
+    Returns ``(entity_ids, analysis_doc)``; ``analysis_doc`` is ``None`` when
+    the selector was a standalone note. A numeric selector is tried as an
+    analysis id first; on a 404 the same number is tried as a note id —
+    notes and analyses share the same ``attachments/documents/entity/{id}``
+    document store.
+    """
+    try:
+        analysis_doc = await _resolve_analysis(client, settings, code_or_id)
+    except UpstreamError as exc:
+        if exc.status_code != _NOT_FOUND or not code_or_id.isdigit():
+            raise
+        note = await _resolve_note(client, settings, int(code_or_id))
+        return [note["id"]], None
+    entity_ids = [analysis_doc["id"]]
+    for note in analysis_doc.get("notesList") or []:
+        if isinstance(note, dict) and isinstance(note.get("id"), int):
+            entity_ids.append(note["id"])
+    return entity_ids, analysis_doc
+
+
 async def download_attachment(
     client: SafeHttpClient, settings: Settings, *, analysis: str, filename: str
 ) -> dict[str, Any]:
-    """Download one GLANCE attachment version (paper/PAS/AN drafts) into state storage.
+    """Download one GLANCE attachment version (paper/PAS/AN/note drafts) into state storage.
 
     Document files are served from the SSO-fenced CMS backing store at
     ``cms-alcm.web.cern.ch`` (session-cookie auth, no read API); the link is
@@ -952,16 +1056,15 @@ async def download_attachment(
     helper: host + ``filePath`` + ``fileName`` + extension. ``filename`` is
     the version file name exactly as listed by ``glance_get_analysis``
     (``attachments.documents[].versions[].name``, e.g.
-    ``HIG-23-004-paper-v10.pdf``); it is matched over every document store of
-    the analysis and of the related notes in its ``notesList``.
+    ``HIG-23-004-paper-v10.pdf``) or, for a standalone note, by
+    ``glance_get_note``; it is matched over every document store of the
+    analysis and of the related notes in its ``notesList``. Codes with
+    slashes (``CMS CR-2026/251``) are encoded transparently. A numeric
+    ``analysis`` that is not an analysis id falls back to a standalone-note
+    id lookup.
     """
     code_or_id, filename = _check_download_args(analysis, filename)
-    analysis_doc = await _resolve_analysis(client, settings, code_or_id)
-    analysis_id = analysis_doc["id"]
-    entity_ids = [analysis_id]
-    for note in analysis_doc.get("notesList") or []:
-        if isinstance(note, dict) and isinstance(note.get("id"), int):
-            entity_ids.append(note["id"])
+    entity_ids, _ = await _download_entity_ids(client, settings, code_or_id)
 
     async def _documents(entity_id: int) -> Any:
         payload = await _app_get(

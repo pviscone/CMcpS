@@ -506,15 +506,70 @@ async def test_get_analysis_rejects_bad_input_and_missing(tmp_path: Path) -> Non
         await glance.get_analysis(client, settings, analysis="EXO-00-000")
 
 
+NOTE_TRANSITIONS_PAYLOAD = {
+    "transition": {
+        "entity": {"id": 20873},
+        "currentStage": {"id": 103, "name": "Editor(s) approval"},
+        "targetStage": {"id": 104, "name": "Note approved (Completed)"},
+        "entryConditions": [{"id": 203, "name": "Approve Note"}],
+        "pastEvents": [{"id": 201, "name": "Note registered"}],
+    }
+}
+
+NOTE_HISTORY_PAYLOAD = {
+    "history": {
+        "noteUpdates": [
+            {
+                "id": 20873,
+                "label": "Title",
+                "action": "U",
+                "agent": {"id": 16499, "name": "Jane Doe"},
+                "modifiedOn": "2026-10-29",
+            }
+        ],
+        "observerUpdates": [],
+        "projectUpdates": [],
+    }
+}
+
+
+def _get_note_handler(request: httpx.Request) -> httpx.Response:
+    routes = {
+        "/alcm/api/notes/20873": NOTE_DETAIL_PAYLOAD,
+        "/alcm/api/attachments/documents/entity/20873": NOTE_DOCUMENTS_PAYLOAD,
+        "/alcm/api/transitions/20873": NOTE_TRANSITIONS_PAYLOAD,
+        "/alcm/api/notes/20873/history": NOTE_HISTORY_PAYLOAD,
+    }
+    payload = routes.get(request.url.path)
+    if payload is None:
+        raise AssertionError(f"unexpected request {request.url}")
+    return httpx.Response(200, json=payload)
+
+
 async def test_get_note_url_and_payload(tmp_path: Path) -> None:
+    recorder = Recorder(_get_note_handler)
+    settings, client = make_client(tmp_path, recorder)
+    result = await glance.get_note(client, settings, note_id=20873)
+    assert result["note"]["id"] == 20873
+    documents = result["attachments"]["documents"]
+    assert documents[0]["versions"][0]["name"] == "AN2022_104_v13.pdf"
+    assert result["workflow"]["currentStage"]["name"] == "Editor(s) approval"
+    assert result["history"]["noteUpdates"][0]["label"] == "Title"
+
+
+async def test_get_note_support_endpoint_failure_is_nonfatal(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/alcm/api/notes/20873"
-        return httpx.Response(200, json=NOTE_DETAIL_PAYLOAD)
+        if request.url.path == "/alcm/api/notes/20873":
+            return httpx.Response(200, json=NOTE_DETAIL_PAYLOAD)
+        return httpx.Response(500, json={"message": "boom"})
 
     recorder = Recorder(handler)
     settings, client = make_client(tmp_path, recorder)
     result = await glance.get_note(client, settings, note_id=20873)
     assert result["note"]["id"] == 20873
+    assert "error" in result["attachments"]["documents"]
+    assert "error" in result["workflow"]
+    assert "error" in result["history"]
 
 
 async def test_get_note_rejects_bad_id_and_empty(tmp_path: Path) -> None:
@@ -711,3 +766,89 @@ async def test_download_attachment_rejects_traversal_filename(tmp_path: Path) ->
             client, settings, analysis="HIG-23-004", filename="../evil.pdf"
         )
     assert recorder.requests == []
+
+
+async def test_get_analysis_percent_encodes_slash_code(tmp_path: Path) -> None:
+    """Conference-report codes embed spaces/slashes and must not break the path."""
+
+    encoded = "/alcm/api/analysis/ancode/CMS%20CR-2026%2F251"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith(encoded):
+            return httpx.Response(200, json={"analysis": {"id": 77, "customId": "CMS CR-2026/251"}})
+        # Support endpoints stay unavailable; get_analysis tolerates that.
+        return httpx.Response(404, json={"message": "not here"})
+
+    recorder = Recorder(handler)
+    settings, client = make_client(tmp_path, recorder)
+    result = await glance.get_analysis(client, settings, analysis="CMS CR-2026/251")
+    assert result["analysis_id"] == 77
+    assert result["analysis_code"] == "CMS CR-2026/251"
+    assert any(str(request.url).endswith(encoded) for request in recorder.requests)
+
+
+CR_NOTE_PAYLOAD = {"note": {"id": 20869, "title": "TOP CR ICHEP 2026"}}
+
+CR_DOCUMENTS_PAYLOAD = {
+    "documents": [
+        {
+            "id": 44001,
+            "title": "CR2026_251",
+            "versions": [
+                {
+                    "id": 99001,
+                    "name": "CR2026_251_v4.pdf",
+                    "filePath": "/notes/CMS-CR-2026-251",
+                    "fileName": "CR2026_251_v4",
+                    "fileExtension": "pdf",
+                }
+            ],
+        }
+    ]
+}
+
+
+def _note_download_handler(content: bytes) -> Handler:
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host or ""
+        path = request.url.path
+        if host == "cms-alcm.web.cern.ch":
+            return httpx.Response(200, content=content)
+        assert request.headers.get("authorization") == f"Bearer {ALCM_TOKEN}"
+        if path == "/alcm/api/analysis/20869":
+            return httpx.Response(404, json={"message": "Analysis not found"})
+        if path == "/alcm/api/notes/20869":
+            return httpx.Response(200, json=CR_NOTE_PAYLOAD)
+        if path == "/alcm/api/attachments/documents/entity/20869":
+            return httpx.Response(200, json=CR_DOCUMENTS_PAYLOAD)
+        raise AssertionError(f"unexpected request {request.url}")
+
+    return handler
+
+
+async def test_download_attachment_falls_back_to_standalone_note(tmp_path: Path) -> None:
+    body = b"%PDF-1.7 conference report"
+    recorder = Recorder(_note_download_handler(body))
+    settings, client = make_client(tmp_path, recorder)
+    result = await glance.download_attachment(
+        client, settings, analysis="20869", filename="CR2026_251_v4.pdf"
+    )
+    assert result["download_url"] == (
+        "https://cms-alcm.web.cern.ch/notes/CMS-CR-2026-251/CR2026_251_v4.pdf"
+    )
+    assert Path(result["path"]).read_bytes() == body
+
+
+async def test_download_attachment_unknown_note_id_surfaces_note_error(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/alcm/api/analysis/99":
+            return httpx.Response(404, json={"message": "Analysis not found"})
+        if request.url.path == "/alcm/api/notes/99":
+            return httpx.Response(404, json={"message": "Note not found"})
+        raise AssertionError(f"unexpected request {request.url}")
+
+    recorder = Recorder(handler)
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as caught:
+        await glance.download_attachment(client, settings, analysis="99", filename="x.pdf")
+    assert "notes/99" in caught.value.message or "Note not found" in caught.value.message

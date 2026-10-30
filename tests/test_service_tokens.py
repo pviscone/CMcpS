@@ -25,6 +25,7 @@ from cmcps.contracts.errors import (
     BrowserUnavailableError,
     InvalidInputError,
     PolicyViolationError,
+    UpstreamError,
 )
 
 _ENDPOINT = "https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token"
@@ -253,6 +254,68 @@ async def test_service_bearer_refresh_exchange_chain(settings: Settings) -> None
     assert persisted is not None
     assert persisted.access_token == "api-scoped-token"
     assert persisted.refresh_token == "fresh-refresh"
+
+
+async def test_service_bearer_remints_after_refresh_failure(
+    settings: Settings, valid_storage_state: dict[str, Any]
+) -> None:
+    """A record expired beyond its refresh window is discarded and re-minted."""
+    calls: list[str] = []
+
+    async def captor(_: Settings, _state: dict[str, Any], service: str) -> dict[str, Any] | None:
+        calls.append(service)
+        return {
+            "endpoint_url": _ENDPOINT,
+            "post_data": _POST,
+            "response_json": dict(_RESPONSE),
+        }
+
+    auth = AuthService(settings, bearer_captor=captor)
+    auth.store.save(valid_storage_state)
+    expired = ServiceTokenRecord(
+        service="hltinfo",
+        token_endpoint=_ENDPOINT,
+        client_id="cmshltinfo-frontend",
+        access_token="stale-access",
+        refresh_token="stale-refresh",
+        access_expires_at=1.0,
+        refresh_expires_at=1.0,
+    )
+    auth.service_token_store().save(expired)
+
+    token = await auth.service_bearer("hltinfo")
+    assert token == "access-secret"
+    assert calls == ["hltinfo"]
+    persisted = auth.service_token_store().load("hltinfo")
+    assert persisted is not None
+    assert persisted.access_expires_at > time.time()
+
+
+async def test_service_bearer_remint_failure_points_to_reauthenticate(
+    settings: Settings, valid_storage_state: dict[str, Any]
+) -> None:
+    """When refresh and headless re-mint both fail the error asks for reauthenticate."""
+
+    async def captor(_: Settings, _state: dict[str, Any], _service: str) -> dict[str, Any] | None:
+        return None
+
+    auth = AuthService(settings, bearer_captor=captor)
+    auth.store.save(valid_storage_state)
+    expired = ServiceTokenRecord(
+        service="hltinfo",
+        token_endpoint=_ENDPOINT,
+        client_id="cmshltinfo-frontend",
+        access_token="stale-access",
+        refresh_token="stale-refresh",
+        access_expires_at=1.0,
+        refresh_expires_at=1.0,
+    )
+    auth.service_token_store().save(expired)
+
+    with pytest.raises(UpstreamError) as excinfo:
+        await auth.service_bearer("hltinfo")
+    assert "cern_auth_reauthenticate" in (excinfo.value.instructions or "")
+    assert auth.service_token_store().load("hltinfo") is None
 
 
 async def test_exchange_for_audience_http(settings: Settings) -> None:

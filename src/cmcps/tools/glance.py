@@ -216,7 +216,11 @@ def register_glance_tools(  # noqa: C901
         description=(
             "Internal CMS analysis/conference note detail (abstract, authors, "
             "approvers, stage) by numeric id; follow glance_search_notes with "
-            "an id it returns. " + _AUTH_DOC
+            "an id it returns. Also composes the note's attachments "
+            "(attachments.documents[].versions, the file names accepted by "
+            "glance_download_attachment), its workflow tracker (current/target "
+            "stage, pastEvents), and its update history (history.noteUpdates "
+            "etc., which can carry editor comments). " + _AUTH_DOC
         ),
     )
     async def glance_get_note(note_id: Annotated[int, Field(ge=1)]) -> ToolEnvelope:
@@ -304,8 +308,12 @@ def register_glance_tools(  # noqa: C901
             "analysis notes, CWR documents — the PDFs listed in "
             "glance_get_analysis attachments.documents[].versions or in the "
             "related note documents) into local CMcpS download storage. Pass "
-            "analysis as code or id and filename as the exact version name "
-            "(e.g. 'HIG-23-004-paper-v10.pdf'). The files live on the "
+            "analysis as code (also with slashes, e.g. 'CMS CR-2026/251') or "
+            "id and filename as the exact version name "
+            "(e.g. 'HIG-23-004-paper-v10.pdf'). A numeric analysis that is not "
+            "an analysis id is retried as a standalone-note id, so note "
+            "attachments (versions listed by glance_get_note) download the "
+            "same way. The files live on the "
             "SSO-fenced host cms-alcm.web.cern.ch (cookie auth captured by "
             "cern_auth_sign_in); an HTML login page is detected and reported "
             "instead of being saved as a file. Bearer tokens do NOT apply "
