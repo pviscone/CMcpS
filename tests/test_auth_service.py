@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -400,6 +401,34 @@ async def test_warm_sites_does_not_persist_unrelated_state(
     assert await auth.warm_sites((JIRA_SITE,)) is False
     assert calls == 1
     assert auth.store.load() == before
+
+
+async def test_warm_sites_serializes_parallel_warms(
+    settings: Settings,
+    valid_storage_state: dict[str, Any],
+) -> None:
+    """Parallel warms merge instead of clobbering each other's fresh cookies."""
+    twiki = "https://twiki.cern.ch/twiki/bin/viewauth/CMS/WebHome"
+    mattermost = "https://mattermost.web.cern.ch/oauth/gitlab/login"
+
+    async def warmer(_: Settings, state: dict[str, Any], urls: Any) -> dict[str, Any]:
+        await asyncio.sleep(0.05)  # force interleaving if the lock regresses
+        refreshed = dict(state)
+        tag = "WARM_twiki" if "twiki" in urls[0] else "WARM_mattermost"
+        refreshed["cookies"] = [
+            *state["cookies"],
+            {"name": tag, "value": "x", "domain": ".cern.ch", "path": "/", "expires": -1},
+        ]
+        return refreshed
+
+    auth = AuthService(settings, site_warmer=warmer)
+    auth.store.save(valid_storage_state)
+    results = await asyncio.gather(auth.warm_sites([twiki]), auth.warm_sites([mattermost]))
+    assert results == [True, True]
+    stored = auth.store.load()
+    assert stored is not None
+    names = {c["name"] for c in stored.cookies}
+    assert {"WARM_twiki", "WARM_mattermost"} <= names
 
 
 async def test_warm_sites_rejected_without_usable_session(

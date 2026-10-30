@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -134,6 +135,7 @@ class AuthService:
         self.page_fetcher = page_fetcher
         self.page_html_fetcher = page_html_fetcher
         self.bearer_captor = bearer_captor
+        self._warm_lock = asyncio.Lock()
 
     @property
     def identity_host(self) -> str:
@@ -294,15 +296,19 @@ class AuthService:
             return False
         for url in urls:
             validate_url(url, allowed_hosts=self.settings.allowed_hosts)
-        record = self._authenticated_record(urls[0]) if urls else None
-        if record is None:
-            return False
-        refreshed = await self.site_warmer(self.settings, record.storage_state, urls)
-        if not refreshed:
-            return False
-        minimized = minimize_storage_state(refreshed, self.settings.allowed_hosts)
-        self.store.save(minimized)
-        return True
+        # Concurrent tool calls (e.g. a parallel batch) all warm from the same
+        # stored state; without serialization each save clobbers the cookies
+        # another in-flight warm just planted.
+        async with self._warm_lock:
+            record = self._authenticated_record(urls[0]) if urls else None
+            if record is None:
+                return False
+            refreshed = await self.site_warmer(self.settings, record.storage_state, urls)
+            if not refreshed:
+                return False
+            minimized = minimize_storage_state(refreshed, self.settings.allowed_hosts)
+            self.store.save(minimized)
+            return True
 
     async def render_page(self, url: str, *, interact: PortalInteract | None = None) -> str | None:
         """Render one SAML-protected portal page via a headless browser.
