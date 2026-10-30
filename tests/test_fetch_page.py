@@ -36,6 +36,7 @@ class _FakePage:
         redirect: str | None = None,
         fail_goto: bool = False,
         fail_goto_message: str = "navigation failed",
+        goto_response: _FakeAPIResponse | None = None,
     ) -> None:
         self._texts = iter(texts)
         self._last = texts[-1] if texts else ""
@@ -43,16 +44,18 @@ class _FakePage:
         self._redirect = redirect
         self._fail_goto = fail_goto
         self._fail_goto_message = fail_goto_message
+        self._goto_response = goto_response
         self.url = "https://app.cern.ch/page"
 
     def is_closed(self) -> bool:
         return False
 
-    async def goto(self, url: str, wait_until: str, timeout: int) -> None:
+    async def goto(self, url: str, wait_until: str, timeout: int) -> _FakeAPIResponse | None:
         if self._fail_goto:
             raise PlaywrightError(self._fail_goto_message)
         self.last_goto = (url, wait_until, timeout)
         self.url = self._redirect or url
+        return self._goto_response
 
     async def inner_text(self, selector: str) -> str:
         self.last_selector = selector
@@ -89,16 +92,23 @@ class _FakeContext:
         page: _FakePage,
         state: dict[str, Any],
         probe_response: _FakeAPIResponse | None = None,
+        fail_storage_state: bool = False,
     ) -> None:
         self._page = page
         self._state = state
+        self._fail_storage_state = fail_storage_state
         self.request = _FakeRequest(probe_response)
 
     async def new_page(self) -> _FakePage:
         return self._page
 
     async def storage_state(self) -> dict[str, Any]:
+        if self._fail_storage_state:
+            raise PlaywrightError("Target page, context or browser has been closed")
         return copy.deepcopy(self._state)
+
+    async def cookies(self, *_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._state.get("cookies", []))
 
     async def close(self) -> None:
         return None
@@ -120,8 +130,9 @@ def _patch_playwright(
     page: _FakePage,
     state: dict[str, Any],
     probe_response: _FakeAPIResponse | None = None,
+    fail_storage_state: bool = False,
 ) -> None:
-    fake_browser = _FakeBrowser(_FakeContext(page, state, probe_response))
+    fake_browser = _FakeBrowser(_FakeContext(page, state, probe_response, fail_storage_state))
 
     class _PlaywrightCM:
         async def __aenter__(self) -> None:
@@ -237,7 +248,7 @@ async def test_fetch_page_text_pdf_abort_reports_binary(monkeypatch, tmp_path: P
 
 
 async def test_fetch_page_text_abort_landing_on_login_returns_none(
-    monkeypatch, tmp_path: Path
+    monkeypatch: Any, tmp_path: Path
 ) -> None:
     """ERR_ABORTED from an interrupted SSO redirect keeps the stale-session report."""
     probe = _FakeAPIResponse("https://auth.cern.ch/auth/realms/cern/login", "text/html")
@@ -251,6 +262,35 @@ async def test_fetch_page_text_abort_landing_on_login_returns_none(
         _settings(tmp_path), {"cookies": [], "origins": []}, "https://app.cern.ch/page", None, 5
     )
     assert result is None
+
+
+async def test_fetch_page_text_binary_goto_headers_obscura_style(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    """Engines that answer a binary goto instead of aborting (obscura) are caught
+    by the navigation response headers; a dead target afterwards is tolerated."""
+    goto_response = _FakeAPIResponse(
+        "https://cms-alcm.web.cern.ch/notes/x/v4.pdf", "application/pdf"
+    )
+    _patch_playwright(
+        monkeypatch,
+        _FakePage(["x"], goto_response=goto_response),
+        {"cookies": [], "origins": []},
+        probe_response=None,  # the APIRequestContext probe must not be needed
+        fail_storage_state=True,
+    )
+    result = await fetch_page_text(
+        _settings(tmp_path),
+        {"cookies": [], "origins": []},
+        "https://cms-alcm.web.cern.ch/notes/x/v4.pdf",
+        None,
+        5,
+    )
+    assert result is not None
+    payload, state = result
+    assert payload["content_kind"] == "binary"
+    assert payload["content_type"] == "application/pdf"
+    assert state == {"cookies": [], "origins": []}  # input state kept as fallback
 
 
 def _fair_fetcher(captured: dict[str, Any], text: str, refreshed: dict[str, Any]) -> Any:

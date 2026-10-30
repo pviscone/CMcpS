@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS
     browser_type: Literal["chromium", "firefox"] = "chromium"
     browser_executable: str | None = Field(default_factory=_default_browser_executable)
+    # Headless work (page fetches, Bearer mints, site warm-ups) runs on the
+    # obscura browser bundled into the wheel; the interactive SSO sign-in
+    # always uses the visible `browser_type` browser above (obscura is
+    # headless-only). Set CMCPS_HEADLESS_BROWSER=chromium|firefox to keep the
+    # old engine for headless work.
+    headless_browser: Literal["obscura", "chromium", "firefox"] = "obscura"
+    # Escape hatch only: force a specific obscura executable (e.g. a newer
+    # local build). By default the binary bundled in the wheel is used; the
+    # machine-local install is intentionally ignored.
+    obscura_executable: str | None = None
     require_sso: bool = True
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     max_response_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)

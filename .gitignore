@@ -15,6 +15,9 @@ htmlcov/
 !.env.example
 dist/
 
+# Downloaded at wheel build time by hatch_build.py (never committed)
+src/cmcps/_obscura/
+
 # CMcpS local state and captured credentials
 cern-sso-storage-state.json
 downloads/

@@ -5,7 +5,7 @@ CMcpS is a read-only Model Context Protocol server for CERN and CMS resources. I
 ## Requirements
 
 - Python 3.12 or newer
-- Chromium, Chrome, or another Playwright-compatible browser for interactive SSO
+- Chromium, Chrome, or another Playwright-compatible browser for the interactive SSO sign-in only; every headless use runs on the [obscura](https://github.com/h4ckf0r0day/obscura) browser bundled into the wheel by `hatch_build.py` (pinned release, sha256-verified, build platform). `CMCPS_SKIP_OBSCURA_BUNDLE=1 uv build` produces a slim wheel that falls back to the system browser for headless work too.
 - [uv](https://docs.astral.sh/uv/) for local development
 
 ## Setup and run
@@ -53,7 +53,7 @@ MCP client configuration example:
 }
 ```
 
-Plain `uvx cmcps` (no `--from`) resolves the name from PyPI and only works once the package is published there. When using git hosting instead, `uvx --from git+https://<host>/<org>/CMcpS.git cmcps` works the same way. The first run needs a Playwright-compatible system browser (Chromium/Chrome/Firefox) for `cern_auth_sign_in`; the server auto-detects installed browsers in the uvx environment.
+Plain `uvx cmcps` (no `--from`) resolves the name from PyPI and only works once the package is published there. When using git hosting instead, `uvx --from git+https://<host>/<org>/CMcpS.git cmcps` works the same way. Headless work (page fetches, token minting, site warm-ups) needs no system browser: the wheel bundles the [obscura](https://github.com/h4ckf0r0day/obscura) headless browser (Apache-2.0) for the build platform, Playwright attaches to it over CDP, and each obscura server is torn down with its task. Only the visible browser sign-in of `cern_auth_sign_in` needs a system Chromium/Chrome/Firefox (auto-detected).
 
 Note: `uvx --from <local dir>` caches the built wheel per package *version*; source changes without a version bump keep serving the old build until you run `uv cache clean cmcps` (or bump the version).
 
@@ -433,7 +433,9 @@ Configuration uses environment variables with the `CMCPS_` prefix. Common settin
 | `CMCPS_STATE_DIR` | `~/.local/state/cmcps` | Local state directory |
 | `CMCPS_SSO_START_URL` | `https://indico.cern.ch/user/dashboard/` | Protected page that initiates CERN SSO in the browser |
 | `CMCPS_SSO_IDENTITY_HOST` | `auth.cern.ch` | Host whose identity cookie proves login completed |
-| `CMCPS_BROWSER_EXECUTABLE` | auto-detected Chromium/Chrome | Browser binary used by Playwright |
+| `CMCPS_BROWSER_EXECUTABLE` | auto-detected Chromium/Chrome | Visible-sign-in browser binary used by Playwright |
+| `CMCPS_HEADLESS_BROWSER` | `obscura` | Engine for headless work: `obscura` (bundled in the wheel) or `chromium`/`firefox` (system) |
+| `CMCPS_OBSCURA_EXECUTABLE` | bundled in the wheel | Force a specific obscura binary (newer local build); the machine-local install is otherwise never used |
 | `CMCPS_SSO_TIMEOUT_SECONDS` | `180` | Maximum browser sign-in wait (30–900) |
 | `CMCPS_SESSION_MAX_AGE_SECONDS` | `86400` | Maximum local age accepted for browser-session identity cookies |
 | `CMCPS_IDENTITY_COOKIE_NAMES` | `["KEYCLOAK_IDENTITY"]` | Cookie names accepted as proof of login |

@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
+import platform
+import socket
+import subprocess
+import sys
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit
 
+import httpx
 from playwright.async_api import (
     Browser,
     BrowserContext,
@@ -27,8 +35,150 @@ logger = logging.getLogger(__name__)
 
 _CAPTURE_TIMEOUT_SECONDS = 60
 
+_BUNDLED_OBSCURA_DIR = Path(__file__).resolve().parent.parent / "_obscura"
+_OBSCURA_STARTUP_TIMEOUT_SECONDS = 15.0
+_OBSCURA_STARTUP_POLL_SECONDS = 0.1
+_OBSCURA_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+
+
+def _platform_tag() -> str:
+    """Tag the hatch build hook also writes into ``_obscura/PLATFORM``."""
+    return f"{sys.platform}-{platform.machine()}"
+
+
+def bundled_obscura_executable() -> Path | None:
+    """Wheel-shipped obscura binary, only when it targets this platform.
+
+    A foreign-platform binary bundled by an out-of-tree build is refused via
+    the ``PLATFORM`` marker; the machine-local install is intentionally never
+    consulted so packaged behavior stays reproducible.
+    """
+    marker = _BUNDLED_OBSCURA_DIR / "PLATFORM"
+    binary = _BUNDLED_OBSCURA_DIR / "obscura"
+    try:
+        if marker.read_text(encoding="utf-8").strip() != _platform_tag():
+            return None
+    except OSError:
+        return None
+    return binary if binary.is_file() else None
+
+
+def _obscura_executable(settings: Settings) -> Path | None:
+    if settings.obscura_executable:
+        return Path(settings.obscura_executable)
+    return bundled_obscura_executable()
+
+
+def _free_loopback_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+async def _wait_obscura_ready(endpoint: str, timeout_seconds: float) -> bool:
+    """Poll the CDP version endpoint until the obscura server accepts connections."""
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    async with httpx.AsyncClient(trust_env=False) as client:
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                response = await client.get(f"{endpoint}/json/version", timeout=1.0)
+                if response.status_code == httpx.codes.OK:
+                    return True
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(_OBSCURA_STARTUP_POLL_SECONDS)
+    return False
+
+
+async def _stop_obscura(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=_OBSCURA_SHUTDOWN_TIMEOUT_SECONDS)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+
+
+_OBSCURA_PROCESSES: dict[int, asyncio.subprocess.Process] = {}
+_STOP_TASKS: set[asyncio.Task[None]] = set()
+
+
+async def _launch_obscura(playwright: Playwright, executable: Path) -> Browser:
+    """Start the wheel-shipped obscura CDP server and attach Playwright to it.
+
+    ``obscura serve`` listens on an ephemeral loopback port; Playwright talks
+    plain CDP to it. Closing the browser (disconnect) terminates the server
+    process, so no browser outlives its CMcpS task.
+    """
+    port = _free_loopback_port()
+    endpoint = f"http://127.0.0.1:{port}"
+    try:
+        process = await asyncio.create_subprocess_exec(
+            str(executable),
+            "serve",
+            "--port",
+            str(port),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:  # e.g. non-executable or foreign-arch binary
+        raise BrowserUnavailableError(
+            "The bundled obscura browser could not be started",
+            instructions="Set CMCPS_HEADLESS_BROWSER=chromium to use the system "
+            "browser for headless work.",
+        ) from exc
+    if not await _wait_obscura_ready(endpoint, _OBSCURA_STARTUP_TIMEOUT_SECONDS):
+        await _stop_obscura(process)
+        raise BrowserUnavailableError(
+            "The bundled obscura browser did not become ready",
+            instructions="Set CMCPS_HEADLESS_BROWSER=chromium to use the system "
+            "browser for headless work, and report the obscura startup failure.",
+        )
+    try:
+        browser = await playwright.chromium.connect_over_cdp(endpoint)
+    except PlaywrightError as exc:
+        await _stop_obscura(process)
+        raise BrowserUnavailableError(
+            "Playwright could not attach to the bundled obscura browser",
+            instructions="Set CMCPS_HEADLESS_BROWSER=chromium to use the system "
+            "browser for headless work.",
+        ) from exc
+    # Cleanup must not race the event loop shutdown: the serve process is in
+    # the registry so _close_resource stops it synchronously; the disconnect
+    # listener only covers abnormal drops and pops the same entry.
+    _OBSCURA_PROCESSES[id(browser)] = process
+
+    def _on_disconnect(*_args: object) -> None:
+        if _OBSCURA_PROCESSES.pop(id(browser), None) is not None:
+            task = asyncio.ensure_future(_stop_obscura(process))
+            _STOP_TASKS.add(task)
+            task.add_done_callback(_STOP_TASKS.discard)
+
+    browser.on("disconnected", _on_disconnect)
+    return browser
+
+
+async def _release_obscura(browser: object) -> None:
+    """Stop the serve process of one obscura-backed browser, if it is one."""
+    process = _OBSCURA_PROCESSES.pop(id(browser), None)
+    if process is not None:
+        await _stop_obscura(process)
+
 
 async def _launch_browser(settings: Settings, playwright: Playwright, *, headless: bool) -> Browser:
+    """Visible sessions use the system Chromium/Firefox; headless work prefers obscura.
+
+    Obscura is headless-only, so the interactive SSO sign-in always goes to
+    the visible launcher. When the bundled binary is absent (source checkout
+    without a wheel build) headless runs fall back to the visible engine too.
+    """
+    if headless and settings.headless_browser == "obscura":
+        executable = _obscura_executable(settings)
+        if executable is not None:
+            return await _launch_obscura(playwright, executable)
+        logger.info("Bundled obscura unavailable; falling back to %s", settings.browser_type)
     launcher = playwright.chromium if settings.browser_type == "chromium" else playwright.firefox
     kind = "headless" if headless else "visible"
     try:
@@ -84,9 +234,79 @@ async def _close_resource(resource: Browser | BrowserContext | None, label: str)
         await resource.close()
     except PlaywrightError:
         logger.debug("Failed to close Playwright %s", label, exc_info=True)
+    if isinstance(resource, Browser):
+        await _release_obscura(resource)
 
 
 _CAPTURE_FIELD = "response_json"
+
+
+def _client_id_from_jwts(body: dict[str, Any]) -> str | None:
+    """Recover the OIDC client_id from a captured token response's JWTs.
+
+    Keycloak stamps the requesting client into ``azp`` and the audience into
+    ``aud`` (audience-resolved apps such as the GLANCE SPAs get the API
+    audience as ``aud`` already at PKCE login), so ``azp`` wins and ``aud``
+    is only a fallback. Needed when an engine (obscura over CDP) exposes the
+    token response body but neither the POST body nor the authorize redirect
+    chain, leaving no other client_id source.
+    """
+    for field in ("id_token", "access_token"):
+        token = body.get(field)
+        if not isinstance(token, str):
+            continue
+        parts = token.split(".")
+        if len(parts) != 3:  # noqa: PLR2004 - JWS compact serialization
+            continue
+        try:
+            payload = base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4))
+            claims = json.loads(payload)
+        except ValueError:
+            continue
+        if not isinstance(claims, dict):
+            continue
+        azp = claims.get("azp")
+        if isinstance(azp, str) and azp:
+            return azp
+        aud = claims.get("aud")
+        if isinstance(aud, str) and aud:
+            return aud
+        if isinstance(aud, list) and len(aud) == 1:
+            return str(aud[0])
+    return None
+
+
+async def _record_token_exchange(exchange: dict[str, Any], response: Any) -> None:
+    """Store one token-endpoint response as the captured exchange record."""
+    request = response.request
+    try:
+        body = await response.json()
+    except PlaywrightError:
+        return
+    post_data = request.post_data or ""
+    if "client_id=" not in post_data:
+        client_id = exchange.get("client_id_fallback") or _client_id_from_jwts(body)
+        if client_id:
+            post_data = f"{post_data}&client_id={quote(str(client_id), safe='')}".lstrip("&")
+    exchange["endpoint_url"] = request.url
+    exchange["post_data"] = post_data
+    exchange[_CAPTURE_FIELD] = body
+
+
+def _authorize_client_id_hint(exchange: dict[str, Any], url: str) -> bool:
+    """Remember the PKCE authorize request's client_id as a fallback source.
+
+    Some engines (obscura over CDP) do not expose POST bodies, so the
+    authorize hit doubles as the client_id fallback for the record. Returns
+    True when the URL is an authorize request (already handled).
+    """
+    if "protocol/openid-connect/auth" not in url:
+        return False
+    for key, value in parse_qsl(urlsplit(url).query):
+        if key == "client_id" and value:
+            exchange["client_id_fallback"] = value
+            break
+    return True
 
 
 async def _capture_one_service(context: BrowserContext, app_url: str) -> dict[str, Any] | None:
@@ -96,17 +316,14 @@ async def _capture_one_service(context: BrowserContext, app_url: str) -> dict[st
 
     async def on_response(response: Any) -> None:
         request = response.request
-        if request.method != "POST" or "protocol/openid-connect/token" not in request.url:
+        url = request.url
+        if _authorize_client_id_hint(exchange, url):
+            return
+        if request.method != "POST" or "protocol/openid-connect/token" not in url:
             return
         if exchange.get(_CAPTURE_FIELD) is not None:
             return
-        try:
-            body = await response.json()
-        except PlaywrightError:
-            return
-        exchange["endpoint_url"] = request.url
-        exchange["post_data"] = request.post_data or ""
-        exchange[_CAPTURE_FIELD] = body
+        await _record_token_exchange(exchange, response)
 
     try:
         page = await context.new_page()
@@ -130,6 +347,28 @@ async def _capture_one_service(context: BrowserContext, app_url: str) -> dict[st
     return exchange if exchange.get(_CAPTURE_FIELD) is not None else None
 
 
+async def _capture_service_once(
+    settings: Settings,
+    playwright: Playwright,
+    storage_state: dict[str, Any],
+    app_url: str,
+    label: str,
+) -> dict[str, Any] | None:
+    """Run one silent-flow capture attempt with the settings' headless engine."""
+    browser: Browser | None = None
+    context: BrowserContext | None = None
+    try:
+        browser = await _launch_browser(settings, playwright, headless=True)
+        context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
+        return await _capture_one_service(context, app_url)
+    except PlaywrightError:
+        logger.debug("Bearer capture failed for %s", label, exc_info=True)
+        return None
+    finally:
+        await _close_resource(context, f"lazy-capture context {label}")
+        await _close_resource(browser, f"lazy-capture browser {label}")
+
+
 async def capture_bearer_service(
     settings: Settings,
     storage_state: dict[str, Any],
@@ -143,7 +382,10 @@ async def capture_bearer_service(
     token-endpoint exchange is intercepted. Returns the raw captured
     exchange, or ``None`` when the service is unknown/unconfigured or no
     exchange was intercepted. ``BrowserUnavailableError`` propagates so the
-    caller can distinguish "no browser" from "no exchange".
+    caller can distinguish "no browser" from "no exchange". Apps whose
+    Keycloak flows need full browser machinery (3p-cookies iframe chains)
+    stall on the lean obscura engine; those fall back to one attempt with
+    the system browser before giving up.
     """
     url_attr = BEARER_SERVICES.get(service)
     if url_attr is None:
@@ -151,19 +393,19 @@ async def capture_bearer_service(
     app_url = getattr(settings, url_attr, None)
     if not app_url:
         return None
-    browser: Browser | None = None
-    context: BrowserContext | None = None
-    try:
-        async with async_playwright() as playwright:
-            browser = await _launch_browser(settings, playwright, headless=True)
-            context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
-            return await _capture_one_service(context, str(app_url))
-    except PlaywrightError:
-        logger.debug("Lazy Bearer capture failed for %s", service, exc_info=True)
+    async with async_playwright() as playwright:
+        captured = await _capture_service_once(
+            settings, playwright, storage_state, str(app_url), service
+        )
+        if captured is not None:
+            return captured
+        if settings.headless_browser == "obscura":
+            fallback = settings.model_copy(update={"headless_browser": "chromium"})
+            logger.info("Bearer capture for %s stalled on obscura; using system browser", service)
+            return await _capture_service_once(
+                fallback, playwright, storage_state, str(app_url), service
+            )
         return None
-    finally:
-        await _close_resource(context, f"lazy-capture context {service}")
-        await _close_resource(browser, f"lazy-capture browser {service}")
 
 
 # SSO-protected sites that only need session cookies (no Bearer tokens).
@@ -394,9 +636,14 @@ async def _visit_cookie_site(
     page: Page | None = None
     try:
         page = await context.new_page()
+        # domcontentloaded is enough: redirect Set-Cookie headers land while
+        # walking to the final document, and the readiness poll (or the 1 s
+        # settle) covers the final page's own cookies. `wait_until="load"`
+        # stalls on lean engines (obscura) until the timeout, and the
+        # swallowed PlaywrightError then reports a warm with zero cookies.
         await page.goto(
             site_url,
-            wait_until="load",
+            wait_until="domcontentloaded",
             timeout=_COOKIE_CAPTURE_TIMEOUT_MS,
         )
         if advance is not None:
@@ -451,7 +698,10 @@ async def warm_cookie_sites(
             context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
             for site_url, advance, ready in targets:
                 await _visit_cookie_site(context, site_url, advance, ready)
-            return await context.storage_state()
+            # Some engines reject storage_state() once a site registers a
+            # service worker (obscura: unknown Network.setBypassServiceWorker);
+            # keep the input state rather than losing the warmed cookies'.
+            return await _safe_storage_state(context, dict(storage_state))
     except (PlaywrightError, BrowserUnavailableError):
         logger.debug("Cookie-site warm-up failed for %s", list(urls), exc_info=True)
         return None
@@ -704,6 +954,25 @@ _TEXTUAL_CONTENT_PREFIXES = (
 )
 
 
+def _binary_content_type(content_type_header: str) -> bool:
+    ctype = content_type_header.split(";", maxsplit=1)[0].strip().lower()
+    return bool(ctype) and not any(ctype.startswith(prefix) for prefix in _TEXTUAL_CONTENT_PREFIXES)
+
+
+def _binary_payload(url: str, final_url: str, content_type_header: str) -> dict[str, Any]:
+    ctype = content_type_header.split(";", maxsplit=1)[0].strip().lower()
+    return {
+        "url": url,
+        "final_url": final_url,
+        "title": None,
+        "text": "",
+        "marker_found": None,
+        "auth_divert": False,
+        "content_kind": "binary",
+        "content_type": ctype,
+    }
+
+
 async def _binary_download_payload(
     context: BrowserContext, url: str, navigation_error: str
 ) -> dict[str, Any] | None:
@@ -723,21 +992,32 @@ async def _binary_download_payload(
         response = await context.request.get(url)
     except PlaywrightError:
         return None
-    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-    if not content_type or any(
-        content_type.startswith(prefix) for prefix in _TEXTUAL_CONTENT_PREFIXES
-    ):
+    content_type = response.headers.get("content-type", "")
+    if not _binary_content_type(content_type):
         return None
-    return {
-        "url": url,
-        "final_url": response.url,
-        "title": None,
-        "text": "",
-        "marker_found": None,
-        "auth_divert": False,
-        "content_kind": "binary",
-        "content_type": content_type,
-    }
+    return _binary_payload(url, str(response.url), content_type)
+
+
+async def _safe_storage_state(context: BrowserContext, fallback: dict[str, Any]) -> dict[str, Any]:
+    """Collect the refreshed storage state; never fail the caller on a dead target.
+
+    Binary navigations can detach the CDP target before the state drain
+    (observed with obscura), so a best-effort state refresh degrades to the
+    cookie jar (obscura also rejects ``storage_state()`` outright whenever a
+    page registered a service worker: unknown ``Network.setBypassServiceWorker``)
+    and finally to the input state instead of aborting the fetch. Cookies are
+    the state CMcpS persists; localStorage/origins from the fallback are kept.
+    """
+    try:
+        return await context.storage_state()
+    except PlaywrightError:
+        logger.debug("Storage-state refresh failed; degrading to cookies-only")
+    try:
+        cookies = await context.cookies()
+        return {"cookies": cookies, "origins": fallback.get("origins") or []}
+    except PlaywrightError:
+        logger.debug("Cookie collection failed; keeping the input state")
+        return fallback
 
 
 async def fetch_page_text(
@@ -772,7 +1052,7 @@ async def fetch_page_text(
             context = await browser.new_context(storage_state=storage_state, accept_downloads=False)
             page = await context.new_page()
             try:
-                await page.goto(
+                response = await page.goto(
                     url,
                     wait_until="domcontentloaded",
                     timeout=min(30_000, timeout_seconds * 1000),
@@ -780,9 +1060,18 @@ async def fetch_page_text(
             except PlaywrightError as exc:
                 binary = await _binary_download_payload(context, url, str(exc))
                 if binary is not None:
-                    return binary, await context.storage_state()
+                    return binary, await _safe_storage_state(context, storage_state)
                 logger.debug("Fetch-page load failed for %s", url)
                 return None
+            # Engines that do not abort binary navigations (obscura) answer
+            # the goto with a response whose content-type betrays the file;
+            # skip the body poll before the CDP target detaches.
+            if response is not None and _binary_content_type(
+                response.headers.get("content-type", "")
+            ):
+                return _binary_payload(
+                    url, str(response.url), response.headers["content-type"]
+                ), await _safe_storage_state(context, storage_state)
             text, found = await _poll_body_text(
                 page,
                 marker=marker,
@@ -802,7 +1091,7 @@ async def fetch_page_text(
                 "marker_found": found if marker is not None else None,
                 "auth_divert": final_host in {settings.sso_identity_host, _AUTHFLOW_HOST},
             }
-            return payload, await context.storage_state()
+            return payload, await _safe_storage_state(context, storage_state)
     finally:
         await _close_resource(context, "fetch-page context")
         await _close_resource(browser, "fetch-page browser")
@@ -929,7 +1218,7 @@ async def fetch_page_html_text(
             )
             if payload is None:
                 return None
-            return payload, await context.storage_state()
+            return payload, await _safe_storage_state(context, storage_state)
     finally:
         await _close_resource(context, "fetch-page-html context")
         await _close_resource(browser, "fetch-page-html browser")
