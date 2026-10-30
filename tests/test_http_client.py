@@ -488,3 +488,69 @@ async def test_json_post_warms_site_and_retries_once(
     assert response.status_code == 200
     assert len(requests) == 2
     assert warmed == [["https://mattermost.web.cern.ch/oauth/gitlab/login"]]
+
+
+async def test_json_post_sso_bounce_warms_site_and_retries_once(
+    settings: Settings, valid_storage_state: dict[str, Any], future_epoch: float
+) -> None:
+    """An oauth2-proxy bounce to the Keycloak authorize endpoint (any status)
+    triggers the same warm-and-retry as a 401: the cold-cookie Run Registry case."""
+    warmed: list[list[str]] = []
+
+    async def site_warmer(
+        _: Settings, _state: dict[str, Any], urls: list[str] | tuple[str, ...]
+    ) -> dict[str, Any]:
+        warmed.append(list(urls))
+        return {
+            "cookies": [
+                *valid_storage_state["cookies"],
+                {
+                    "name": "_oauth2_proxy_0",
+                    "value": "fresh",
+                    "domain": ".cmsrunregistry.web.cern.ch",
+                    "path": "/",
+                    "expires": future_epoch,
+                    "secure": True,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                },
+            ],
+            "origins": [],
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "_oauth2_proxy_0" in request.headers.get("Cookie", ""):
+            return httpx.Response(200, json={"data": []})
+        if request.url.host == "auth.cern.ch":
+            # The oauth2-proxy bounce ends here: Keycloak answers 400 mid-handshake.
+            return httpx.Response(400)
+        # Cookie-less call redirected onto the authorize endpoint.
+        return httpx.Response(
+            302,
+            headers={
+                "location": "https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/auth?x=1"
+            },
+        )
+
+    requests: list[httpx.Request] = []
+
+    def recorder(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return handler(request)
+
+    auth = AuthService(settings, site_warmer=site_warmer)
+    SessionStore(settings.session_path).save(valid_storage_state)
+    client = SafeHttpClient(
+        settings,
+        auth,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(recorder)),
+    )
+    response = await client.request_json_post(
+        "https://cmsrunregistry.web.cern.ch/api/runs_filtered_ordered",
+        json_body={"page": 0, "page_size": 1, "filter": {}, "sortings": []},
+        allowlist=("cmsrunregistry.web.cern.ch",),
+    )
+    assert response.status_code == 200
+    hosts = [request.url.host for request in requests]
+    assert hosts == ["cmsrunregistry.web.cern.ch", "auth.cern.ch", "cmsrunregistry.web.cern.ch"]
+    assert warmed == [["https://cmsrunregistry.web.cern.ch/"]]

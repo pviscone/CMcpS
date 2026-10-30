@@ -236,9 +236,9 @@ class SafeHttpClient:
             authenticated=authenticated,
             service_headers=service_headers,
         )
-        if response.status_code in _WARM_RETRY_STATUSES and await self._warm_for_host(
-            url, authenticated=authenticated
-        ):
+        if (
+            response.status_code in _WARM_RETRY_STATUSES or self._redirected_to_sso(response, url)
+        ) and await self._warm_for_host(url, authenticated=authenticated):
             response = await self._request(
                 method,
                 url,
@@ -260,6 +260,18 @@ class SafeHttpClient:
         if site_url is None:
             return False
         return await self.auth_service.warm_sites([site_url])
+
+    def _redirected_to_sso(self, response: SafeResponse, target_url: str) -> bool:
+        """Whether the answer is the SSO login reached by following redirects.
+
+        oauth2-proxy-fronted APIs (e.g. the Run Registry) bounce cookie-less
+        calls onto the Keycloak authorize endpoint, which answers with
+        arbitrary statuses (observed 400 mid-handshake) instead of 401/403 —
+        that response shape needs the same one warm-and-retry as a 401.
+        """
+        final_host = urlsplit(str(response.url)).hostname
+        target_host = urlsplit(target_url).hostname
+        return final_host == self.settings.sso_identity_host and final_host != target_host
 
     async def _request(
         self,
@@ -479,9 +491,9 @@ class SafeHttpClient:
             authenticated=authenticated,
             service_headers=service_headers,
         )
-        if response.status_code in _WARM_RETRY_STATUSES and await self._warm_for_host(
-            url, authenticated=authenticated
-        ):
+        if (
+            response.status_code in _WARM_RETRY_STATUSES or self._redirected_to_sso(response, url)
+        ) and await self._warm_for_host(url, authenticated=authenticated):
             response = await self._post(
                 url,
                 form=None,
