@@ -404,3 +404,180 @@ async def test_non_json_body_raises_upstream(tmp_path: Path) -> None:
     settings, client = make_client(tmp_path, recorder)
     with pytest.raises(UpstreamError):
         await gitlab.search_projects(client, settings)
+
+
+PIPELINE = {
+    "id": 7,
+    "iid": 3,
+    "status": "failed",
+    "ref": "master",
+    "sha": "cafebabe",
+    "source": "push",
+    "created_at": "2026-10-30T10:00:00Z",
+    "updated_at": "2026-10-30T10:05:00Z",
+    "web_url": "https://gitlab.cern.ch/group/example/-/pipelines/7",
+}
+
+PIPELINE_DETAIL = {
+    **PIPELINE,
+    "before_sha": "00000000",
+    "started_at": "2026-10-30T10:00:10Z",
+    "finished_at": "2026-10-30T10:05:00Z",
+    "committed_at": "2026-10-30T09:59:00Z",
+    "duration": 290,
+    "queued_duration": 10,
+    "coverage": "94.2",
+    "user": {"username": "elmer"},
+}
+
+JOB = {
+    "id": 99,
+    "name": "pytest",
+    "stage": "test",
+    "status": "failed",
+    "ref": "master",
+    "tag": False,
+    "allow_failure": False,
+    "created_at": "2026-10-30T10:00:10Z",
+    "started_at": "2026-10-30T10:00:20Z",
+    "finished_at": "2026-10-30T10:02:00Z",
+    "duration": 100.5,
+    "queued_duration": 10.0,
+    "web_url": "https://gitlab.cern.ch/group/example/-/jobs/99",
+    "user": {"username": "elmer"},
+    "runner": {"description": "kubernetes-runner"},
+    "pipeline": {
+        "id": 7,
+        "status": "failed",
+        "ref": "master",
+        "sha": "cafebabe",
+        "web_url": "https://gitlab.cern.ch/group/example/-/pipelines/7",
+    },
+    "commit": {"id": "cafebabe", "short_id": "cafe", "title": "Fix things"},
+    "artifacts": [{"file_type": "archive", "filename": "dist.zip", "size": 2048}],
+}
+
+
+async def test_list_pipelines_builds_url_and_envelope(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v4/projects/42/pipelines"
+        params = request.url.params
+        assert params["status"] == "failed"
+        assert params["ref"] == "master"
+        assert params["source"] == "push"
+        assert params["per_page"] == "5"
+        assert params["page"] == "2"
+        return httpx.Response(200, json=[PIPELINE])
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    result = await gitlab.list_pipelines(
+        client,
+        settings,
+        project="42",
+        status="failed",
+        ref="master",
+        source="push",
+        per_page=5,
+        page=2,
+    )
+    assert result.source == "gitlab"
+    assert result.items[0]["id"] == 7
+    assert result.items[0]["status"] == "failed"
+    assert result.items[0]["web_url"].endswith("/pipelines/7")
+    assert result.has_more is False
+    assert result.page == 2
+
+
+async def test_list_pipelines_omits_empty_filters(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        assert "status" not in params
+        assert "ref" not in params
+        assert "source" not in params
+        return httpx.Response(200, json=[PIPELINE])
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    result = await gitlab.list_pipelines(client, settings, project="42")
+    assert result.items[0]["ref"] == "master"
+
+
+async def test_list_pipelines_rejects_unknown_status(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _: httpx.Response(200, json=[]))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(InvalidInputError):
+        await gitlab.list_pipelines(client, settings, project="42", status="exploding")
+    assert recorder.requests == []
+
+
+async def test_get_pipeline_returns_detail(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v4/projects/42/pipelines/7"
+        return httpx.Response(200, json=PIPELINE_DETAIL)
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    detail = await gitlab.get_pipeline(client, settings, project="42", pipeline_id=7)
+    assert detail["id"] == 7
+    assert detail["duration"] == 290
+    assert detail["coverage"] == "94.2"
+    assert detail["user"] == "elmer"
+    assert detail["status"] == "failed"
+
+
+async def test_list_pipeline_jobs_builds_url_and_items(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v4/projects/42/pipelines/7/jobs"
+        assert request.url.params["scope"] == "failed"
+        return httpx.Response(200, json=[JOB])
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    result = await gitlab.list_pipeline_jobs(
+        client, settings, project="42", pipeline_id=7, scope="failed"
+    )
+    job = result.items[0]
+    assert job["id"] == 99
+    assert job["name"] == "pytest"
+    assert job["stage"] == "test"
+    assert job["user"] == "elmer"
+    assert job["runner"] == "kubernetes-runner"
+    assert result.note == "project=42 pipeline=7"
+
+
+async def test_list_pipeline_jobs_rejects_unknown_scope(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _: httpx.Response(200, json=[]))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(InvalidInputError):
+        await gitlab.list_pipeline_jobs(client, settings, project="42", pipeline_id=7, scope="lost")
+    assert recorder.requests == []
+
+
+async def test_get_job_returns_detail_with_pipeline_and_artifacts(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v4/projects/42/jobs/99"
+        return httpx.Response(200, json=JOB)
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    detail = await gitlab.get_job(client, settings, project="42", job_id=99)
+    assert detail["id"] == 99
+    assert detail["pipeline"]["id"] == 7
+    assert detail["commit"]["short_id"] == "cafe"
+    assert detail["artifacts"] == [{"file_type": "archive", "filename": "dist.zip", "size": 2048}]
+
+
+async def test_get_job_trace_returns_tail(tmp_path: Path) -> None:
+    log = "\n".join(f"line {i}" for i in range(1000))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v4/projects/42/jobs/99/trace"
+        return httpx.Response(200, content=log.encode(), headers={"content-type": "text/plain"})
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    untruncated = await gitlab.get_job_trace(client, settings, project="42", job_id=99)
+    assert untruncated["truncated"] is False
+    assert untruncated["trace"] == log
+    assert untruncated["total_chars"] == len(log)
+
+    tailed = await gitlab.get_job_trace(client, settings, project="42", job_id=99, tail_chars=100)
+    assert tailed["truncated"] is True
+    assert tailed["total_chars"] == len(log)
+    assert len(tailed["trace"]) == 100
+    assert tailed["trace"] == log[-100:]

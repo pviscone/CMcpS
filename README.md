@@ -120,6 +120,11 @@ Facts about `CMCPS_GITLAB_TOKEN`:
 - `gitlab_search_projects` — project search with language/topic/visibility filters; authenticated identities also see internal/private projects they can access.
 - `gitlab_get_project` — project info including statistics and language breakdown.
 - `gitlab_list_merge_requests` — merge requests of one project, state/order filters.
+- `gitlab_list_pipelines` — pipelines of one project, status/ref/source filters.
+- `gitlab_get_pipeline` — one pipeline with timings, duration, and coverage.
+- `gitlab_list_pipeline_jobs` — jobs of one pipeline with stage/status/runner.
+- `gitlab_get_job` — one job with its pipeline, commit, and artifacts.
+- `gitlab_get_job_trace` — job log text (tail-truncated when large).
 - `gitlab_list_files` — repository tree listing.
 - `gitlab_get_file` — file content (text decoded; binaries return a placeholder).
 - `gitlab_get_readme` — first README variant of a project.

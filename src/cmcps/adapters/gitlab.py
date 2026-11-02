@@ -58,6 +58,31 @@ TAG_SORTS = ("asc", "desc")
 VISIBILITIES = ("public", "internal", "private")
 MR_STATES = ("opened", "closed", "locked", "merged", "all")
 MR_ORDER_BY = ("created_at", "updated_at", "title", "merged_at")
+PIPELINE_STATUSES = (
+    "created",
+    "waiting_for_resource",
+    "preparing",
+    "pending",
+    "running",
+    "success",
+    "failed",
+    "canceled",
+    "skipped",
+    "manual",
+    "scheduled",
+)
+JOB_SCOPES = (
+    "created",
+    "pending",
+    "running",
+    "failed",
+    "success",
+    "canceled",
+    "skipped",
+    "waiting_for_resource",
+    "manual",
+)
+_TRACE_TEXT_LIMIT = 60000
 _NOT_FOUND = 404
 _MAX_PER_PAGE = 100
 
@@ -764,3 +789,223 @@ async def list_tags(
     return _page_result(
         items, per_page=per_page, page=page, query=search, sort=sort, note=f"project={project}"
     )
+
+
+def _pipeline_item(pipeline: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": pipeline.get("id"),
+        "iid": pipeline.get("iid"),
+        "status": pipeline.get("status"),
+        "ref": pipeline.get("ref"),
+        "sha": pipeline.get("sha"),
+        "source": pipeline.get("source"),
+        "created_at": pipeline.get("created_at"),
+        "updated_at": pipeline.get("updated_at"),
+        "web_url": pipeline.get("web_url"),
+    }
+
+
+def _job_item(job: dict[str, Any]) -> dict[str, Any]:
+    user = job.get("user") or {}
+    runner = job.get("runner") or {}
+    return {
+        "id": job.get("id"),
+        "name": job.get("name"),
+        "stage": job.get("stage"),
+        "status": job.get("status"),
+        "ref": job.get("ref"),
+        "tag": bool(job.get("tag", False)),
+        "allow_failure": bool(job.get("allow_failure", False)),
+        "created_at": job.get("created_at"),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "duration": job.get("duration"),
+        "queued_duration": job.get("queued_duration"),
+        "web_url": job.get("web_url"),
+        "user": user.get("username"),
+        "runner": runner.get("description"),
+    }
+
+
+async def list_pipelines(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    project: str,
+    status: str | None = None,
+    ref: str | None = None,
+    source: str | None = None,
+    per_page: int = 20,
+    page: int = 1,
+) -> SearchResult:
+    """List pipelines of one project, optionally filtered by status/ref/source."""
+    if status is not None and status not in PIPELINE_STATUSES:
+        raise InvalidInputError(
+            f"status must be one of {PIPELINE_STATUSES}, got {status!r}",
+            instructions="Omit status for every pipeline state.",
+        )
+    per_page = _clamp_per_page(per_page)
+    params: dict[str, str | int] = {"per_page": per_page, "page": page}
+    if status:
+        params["status"] = status
+    if ref:
+        params["ref"] = ref
+    if source:
+        params["source"] = source
+    response = await client.request(
+        "GET",
+        _url(settings, f"/projects/{_project_key(project)}/pipelines"),
+        params=params,
+        service_headers=_service_headers(settings),
+    )
+    data = json_body(response, source=SOURCE)
+    items = [_pipeline_item(pipeline) for pipeline in data]
+    return _page_result(
+        items,
+        per_page=per_page,
+        page=page,
+        note=f"project={project}",
+    )
+
+
+async def get_pipeline(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    project: str,
+    pipeline_id: int,
+) -> dict[str, Any]:
+    """Return full detail of one pipeline of one project."""
+    response = await client.request(
+        "GET",
+        _url(settings, f"/projects/{_project_key(project)}/pipelines/{int(pipeline_id)}"),
+        service_headers=_service_headers(settings),
+    )
+    data = json_body(response, source=SOURCE)
+    item = _pipeline_item(data)
+    user = data.get("user") or {}
+    item.update(
+        {
+            "before_sha": data.get("before_sha"),
+            "started_at": data.get("started_at"),
+            "finished_at": data.get("finished_at"),
+            "committed_at": data.get("committed_at"),
+            "duration": data.get("duration"),
+            "queued_duration": data.get("queued_duration"),
+            "coverage": data.get("coverage"),
+            "user": user.get("username"),
+        }
+    )
+    return item
+
+
+async def list_pipeline_jobs(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    project: str,
+    pipeline_id: int,
+    scope: str | None = None,
+    per_page: int = 20,
+    page: int = 1,
+) -> SearchResult:
+    """List jobs of one pipeline, optionally filtered to one status scope."""
+    if scope is not None and scope not in JOB_SCOPES:
+        raise InvalidInputError(
+            f"scope must be one of {JOB_SCOPES}, got {scope!r}",
+            instructions="Omit scope for every job state.",
+        )
+    per_page = _clamp_per_page(per_page)
+    params: dict[str, str | int] = {"per_page": per_page, "page": page}
+    if scope:
+        params["scope"] = scope
+    response = await client.request(
+        "GET",
+        _url(
+            settings,
+            f"/projects/{_project_key(project)}/pipelines/{int(pipeline_id)}/jobs",
+        ),
+        params=params,
+        service_headers=_service_headers(settings),
+    )
+    data = json_body(response, source=SOURCE)
+    items = [_job_item(job) for job in data]
+    return _page_result(
+        items,
+        per_page=per_page,
+        page=page,
+        note=f"project={project} pipeline={pipeline_id}",
+    )
+
+
+async def get_job(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    project: str,
+    job_id: int,
+) -> dict[str, Any]:
+    """Return full detail of one job of one project."""
+    response = await client.request(
+        "GET",
+        _url(settings, f"/projects/{_project_key(project)}/jobs/{int(job_id)}"),
+        service_headers=_service_headers(settings),
+    )
+    data = json_body(response, source=SOURCE)
+    item = _job_item(data)
+    pipeline = data.get("pipeline") or {}
+    commit = data.get("commit") or {}
+    item.update(
+        {
+            "pipeline": {
+                "id": pipeline.get("id"),
+                "status": pipeline.get("status"),
+                "ref": pipeline.get("ref"),
+                "sha": pipeline.get("sha"),
+                "web_url": pipeline.get("web_url"),
+            },
+            "commit": {
+                "id": commit.get("id"),
+                "short_id": commit.get("short_id"),
+                "title": commit.get("title"),
+            },
+            "artifacts": [
+                {
+                    "file_type": artifact.get("file_type"),
+                    "filename": artifact.get("filename"),
+                    "size": artifact.get("size"),
+                }
+                for artifact in data.get("artifacts") or []
+                if isinstance(artifact, dict)
+            ],
+        }
+    )
+    return item
+
+
+async def get_job_trace(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    project: str,
+    job_id: int,
+    tail_chars: int = _TRACE_TEXT_LIMIT,
+) -> dict[str, Any]:
+    """Return the plain-text log (trace) of one job, tail-truncated when large."""
+    response = await client.request(
+        "GET",
+        _url(settings, f"/projects/{_project_key(project)}/jobs/{int(job_id)}/trace"),
+        service_headers=_service_headers(settings),
+    )
+    text = response.content.decode("utf-8", errors="replace")
+    total_chars = len(text)
+    truncated = total_chars > tail_chars
+    if truncated:
+        text = text[-tail_chars:]
+    return {
+        "project": project,
+        "job_id": int(job_id),
+        "total_chars": total_chars,
+        "truncated": truncated,
+        "trace": text,
+    }

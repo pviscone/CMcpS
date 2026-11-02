@@ -244,6 +244,135 @@ def register_gitlab_tools(  # noqa: C901
         )
 
     @server.tool(
+        name="gitlab_list_pipelines",
+        description=(
+            "List pipelines of one gitlab.cern.ch project (id or "
+            "'group/name') — CI status of a repository: 'did the pipeline on "
+            "branch X pass'. Filters: status (created/waiting_for_resource/"
+            "preparing/pending/running/success/failed/canceled/skipped/manual/"
+            "scheduled), ref (branch or tag), source (push/web/schedule/"
+            "trigger/merge_request_event/...). Follow up with "
+            "gitlab_get_pipeline or gitlab_list_pipeline_jobs."
+        ),
+    )
+    async def gitlab_list_pipelines(
+        *,
+        project: str,
+        status: str | None = None,
+        ref: str | None = None,
+        source: str | None = None,
+        per_page: Annotated[int, Field(ge=1, le=100)] = 20,
+        page: Annotated[int, Field(ge=1)] = 1,
+    ) -> ToolEnvelope:
+        """Project pipeline listing."""
+        return await guarded(
+            auth,
+            lambda: gitlab.list_pipelines(
+                http,
+                settings,
+                project=project,
+                status=status,
+                ref=ref,
+                source=source,
+                per_page=per_page,
+                page=page,
+            ),
+        )
+
+    @server.tool(
+        name="gitlab_get_pipeline",
+        description=(
+            "Full detail of one pipeline of a gitlab.cern.ch project by "
+            "pipeline id — status, ref/sha, timings, duration, coverage, "
+            "triggering user. Follow gitlab_list_pipelines; jobs of the "
+            "pipeline come from gitlab_list_pipeline_jobs."
+        ),
+    )
+    async def gitlab_get_pipeline(
+        project: str,
+        pipeline_id: Annotated[int, Field(ge=1)],
+    ) -> ToolEnvelope:
+        """Single pipeline detail."""
+        return await guarded(
+            auth,
+            lambda: gitlab.get_pipeline(http, settings, project=project, pipeline_id=pipeline_id),
+        )
+
+    @server.tool(
+        name="gitlab_list_pipeline_jobs",
+        description=(
+            "List jobs of one pipeline of a gitlab.cern.ch project — stage, "
+            "status, duration, runner per job; scope restricts to one state "
+            "(failed, success, running, ...). pipeline_id and job ids come "
+            "from gitlab_list_pipelines / gitlab_get_pipeline; follow up with "
+            "gitlab_get_job or gitlab_get_job_trace."
+        ),
+    )
+    async def gitlab_list_pipeline_jobs(
+        *,
+        project: str,
+        pipeline_id: Annotated[int, Field(ge=1)],
+        scope: str | None = None,
+        per_page: Annotated[int, Field(ge=1, le=100)] = 20,
+        page: Annotated[int, Field(ge=1)] = 1,
+    ) -> ToolEnvelope:
+        """Pipeline job listing."""
+        return await guarded(
+            auth,
+            lambda: gitlab.list_pipeline_jobs(
+                http,
+                settings,
+                project=project,
+                pipeline_id=pipeline_id,
+                scope=scope,
+                per_page=per_page,
+                page=page,
+            ),
+        )
+
+    @server.tool(
+        name="gitlab_get_job",
+        description=(
+            "Full detail of one CI job of a gitlab.cern.ch project by job id "
+            "— status, stage, timings, runner, triggering pipeline/commit, "
+            "artifacts. job_id comes from gitlab_list_pipeline_jobs; for the "
+            "log output use gitlab_get_job_trace."
+        ),
+    )
+    async def gitlab_get_job(
+        project: str,
+        job_id: Annotated[int, Field(ge=1)],
+    ) -> ToolEnvelope:
+        """Single job detail."""
+        return await guarded(
+            auth,
+            lambda: gitlab.get_job(http, settings, project=project, job_id=job_id),
+        )
+
+    @server.tool(
+        name="gitlab_get_job_trace",
+        description=(
+            "Plain-text log (trace) of one CI job of a gitlab.cern.ch "
+            "project — 'why did CI job X fail'. job_id comes from "
+            "gitlab_list_pipeline_jobs. Long logs are tail-truncated to "
+            "tail_chars characters (the failure tail is kept; 'truncated' "
+            "flags it); fetch full logs via the job web_url in a browser."
+        ),
+    )
+    async def gitlab_get_job_trace(
+        project: str,
+        job_id: Annotated[int, Field(ge=1)],
+        tail_chars: Annotated[int, Field(ge=100, le=200000)] = 60000,
+    ) -> ToolEnvelope:
+        """Job log (trace) text."""
+        return await guarded(
+            auth,
+            lambda: gitlab.get_job_trace(
+                http, settings, project=project, job_id=job_id, tail_chars=tail_chars
+            ),
+        )
+
+    @server.tool(
         name="gitlab_get_wiki",
         description=(
             "List the wiki pages of one gitlab.cern.ch project, or fetch one "
