@@ -24,6 +24,7 @@ from cmsmcp.adapters import (
     cmssearch,
     discourse,
     docdb,
+    github,
     glance,
     gocms,
     hypernews,
@@ -63,6 +64,7 @@ SOURCES: tuple[Source, ...] = (
     Source("jira", "CERN Jira tickets (slow: full-text over all projects, ~20 s)", False),
     Source("glance", "internal CMS analyses (CADI) by title", True),
     Source("inspire", "published HEP papers", True),
+    Source("github", "cms-sw/cmssw pull requests (why/when CMSSW changed)", False),
     Source("cds", "CERN Document Server records", False),
     Source("docdb", "CMS DocDB documents", False),
     Source("servicenow", "CERN Service Portal / knowledge base", False),
@@ -212,6 +214,10 @@ class Searcher:
     async def inspire(self, query: str, limit: int) -> list[Hit]:
         result = await inspire.search_papers(self.client, self.settings, query=query, size=limit)
         return [to_hit("inspire", i) for i in items_of(result)]
+
+    async def github(self, query: str, limit: int) -> list[Hit]:
+        result = await github.search(self.client, query=query, kind="prs", limit=limit)
+        return [to_hit("github", i) for i in items_of(result)]
 
     async def cds(self, query: str, limit: int) -> list[Hit]:
         result = await cds.search(self.client, self.settings, query=query, size=limit)

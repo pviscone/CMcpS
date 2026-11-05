@@ -21,6 +21,7 @@ from cmsmcp.tools.dqm import register_dqm_tools
 from cmsmcp.tools.edms import register_edms_tools
 from cmsmcp.tools.eguide import register_eguide_tools
 from cmsmcp.tools.elog import register_elog_tools
+from cmsmcp.tools.github import register_github_tools
 from cmsmcp.tools.gitlab import register_gitlab_tools
 from cmsmcp.tools.glance import register_glance_tools
 from cmsmcp.tools.gocms import register_gocms_tools
@@ -57,6 +58,7 @@ def register_adapter_tools(
     register_mine_tools(server, settings, auth, http, policy)
     register_lxplus_tools(server, settings, policy)
     register_action_tools(server, settings, auth, http, policy)
+    register_github_tools(server, http)
     register_indico_tools(server, settings, auth, http)
     register_inspire_tools(server, settings, auth, http)
     register_gitlab_tools(server, settings, auth, http)

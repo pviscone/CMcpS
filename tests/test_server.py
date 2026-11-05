@@ -241,7 +241,13 @@ PHONEBOOK_TOOLS = {
     "phonebook_search",
     "phonebook_last_update",
 }
-GATEWAY_TOOLS = {"cern_search", "mine_overview"}
+GATEWAY_TOOLS = {
+    "cern_search",
+    "mine_overview",
+    "github_search",
+    "github_get_thread",
+    "github_get_file",
+}
 LXPLUS_TOOLS = {
     "lxplus_eos_ls",
     "lxplus_read_file",

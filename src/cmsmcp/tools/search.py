@@ -24,6 +24,7 @@ SourceName = Literal[
     "jira",
     "glance",
     "inspire",
+    "github",
     "cds",
     "docdb",
     "servicenow",
