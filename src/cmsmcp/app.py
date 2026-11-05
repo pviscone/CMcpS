@@ -331,10 +331,10 @@ def build_server(  # noqa: C901 - per-tool registration blocks dominate the bran
 
 def main() -> None:
     """Run cmsmcp over MCP stdio, or ``cmsmcp login`` for terminal sign-in."""
-    if sys.argv[1:2] == ["login"]:
-        from cmsmcp.login import run  # noqa: PLC0415 - keep server startup free of CLI code
+    if sys.argv[1:2] and sys.argv[1] != "serve":
+        from cmsmcp.cli import main as cli_main  # noqa: PLC0415 - keep server startup lean
 
-        raise SystemExit(run(sys.argv[2:]))
+        raise SystemExit(cli_main(sys.argv[1:]))
     # httpx logs request URLs at INFO, which would leak OIDC/SAML artifacts from
     # redirect chains into stderr. Policy handles redaction for our own logs.
     logging.getLogger("httpx").setLevel(logging.WARNING)

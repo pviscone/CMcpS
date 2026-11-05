@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, HttpUrl, field_validator
 from pydantic.fields import FieldInfo
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    NoDecode,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 DEFAULT_IDENTITY_COOKIES = ("KEYCLOAK_IDENTITY",)
 DEFAULT_ALLOWED_HOSTS = (
@@ -24,6 +31,10 @@ DEFAULT_ALLOWED_HOSTS = (
     "crt.sh",
     # CERN IT Service-Now portal (service-portal search API + KB JSONv2 reads).
     "cern.service-now.com",
+    # GitHub REST API for cms-sw repositories (token sent only to these hosts).
+    "api.github.com",
+    "github.com",
+    "raw.githubusercontent.com",
 )
 DEFAULT_SSO_START_URL = "https://indico.cern.ch/user/dashboard/"
 DEFAULT_SSO_IDENTITY_HOST = "auth.cern.ch"
@@ -58,6 +69,11 @@ SECRET_FIELDS = (
 
 def secrets_dir() -> Path:
     return default_config_dir() / "secrets"
+
+
+def config_file() -> Path:
+    """Non-secret options written by ``cmsmcp setup`` (``CMSMCP_*=value`` lines)."""
+    return default_config_dir() / "cmsmcp.env"
 
 
 class SecretFilesSource(PydanticBaseSettingsSource):
@@ -125,15 +141,17 @@ class Settings(BaseSettings):
         settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,  # noqa: ARG003 - see below
+        file_secret_settings: PydanticBaseSettingsSource,  # noqa: ARG003
     ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Precedence: explicit arguments > environment > the fixed config file
+        # written by `cmsmcp setup` > private secret files. Nothing is read from
+        # the MCP client's working directory.
         return (
             init_settings,
             env_settings,
-            dotenv_settings,
+            DotEnvSettingsSource(settings_cls, env_file=config_file()),
             SecretFilesSource(settings_cls),
-            file_secret_settings,
         )
 
     state_dir: Path = Field(default_factory=_default_state_dir)
@@ -147,7 +165,7 @@ class Settings(BaseSettings):
     max_result_chars: int = Field(default=16_000, ge=2_000, le=1_000_000)
     # Tool groups to expose ("all", profile names, or group prefixes such as
     # "indico,gitlab"); see cmsmcp.registry.PROFILES. Core tools are always on.
-    profiles: tuple[str, ...] = ("all",)
+    profiles: Annotated[tuple[str, ...], NoDecode] = ("all",)
     # direct: every tool listed to the client. lazy: only cern_search plus
     # cmsmcp_find_tools / cmsmcp_describe_tool / cmsmcp_call (for clients that
     # load every tool schema up front).
@@ -155,7 +173,7 @@ class Settings(BaseSettings):
 
     # --- Policy -----------------------------------------------------------
     # Personal content sources the user opted into, e.g. ["mattermost_dm"].
-    personal_sources: tuple[str, ...] = ()
+    personal_sources: Annotated[tuple[str, ...], NoDecode] = ()
     # Write/act tools are only registered when this is true.
     actions_enabled: bool = False
     # elicit: confirm through the MCP client (falls back to approve when the
@@ -190,8 +208,8 @@ class Settings(BaseSettings):
         ge=60 * 60,
         le=7 * 24 * 60 * 60,
     )
-    identity_cookie_names: tuple[str, ...] = DEFAULT_IDENTITY_COOKIES
-    allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS
+    identity_cookie_names: Annotated[tuple[str, ...], NoDecode] = DEFAULT_IDENTITY_COOKIES
+    allowed_hosts: Annotated[tuple[str, ...], NoDecode] = DEFAULT_ALLOWED_HOSTS
     browser_type: Literal["chromium", "firefox"] = "chromium"
     browser_executable: str | None = Field(default_factory=_default_browser_executable)
     require_sso: bool = True
@@ -255,7 +273,10 @@ class Settings(BaseSettings):
     # certificate over TLS (no SSO-cookie flow exists there): requests to one
     # of these hosts go through a lazy SSL context that loads the cert/key
     # above instead of carrying SSO cookies.
-    grid_cert_hosts: tuple[str, ...] = ("cmsweb.cern.ch",)
+    grid_cert_hosts: Annotated[tuple[str, ...], NoDecode] = (
+        "cmsweb.cern.ch",
+        "cms-rucio-auth.cern.ch",
+    )
 
     @property
     def session_path(self) -> Path:
@@ -287,7 +308,9 @@ class Settings(BaseSettings):
     )
     @classmethod
     def _split_comma_tuple(cls, value: object) -> object:
-        if isinstance(value, str) and not value.lstrip().startswith("["):
+        if isinstance(value, str):
+            if value.lstrip().startswith("["):
+                return tuple(json.loads(value))
             return tuple(part.strip() for part in value.split(",") if part.strip())
         return value
 

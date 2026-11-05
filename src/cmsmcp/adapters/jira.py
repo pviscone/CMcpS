@@ -62,6 +62,16 @@ _ANONYMOUS_NOTE = (
 )
 
 
+def _token_headers(client: SafeHttpClient) -> dict[str, str] | None:
+    """Personal access token (``CMSMCP_JIRA_TOKEN``) as Bearer, when configured."""
+    token = getattr(client.settings, "jira_token", None)
+    return {"Authorization": f"Bearer {token}"} if token else None
+
+
+async def _get(client: SafeHttpClient, url: str, params: dict[str, Any] | None = None) -> Any:
+    return await client.request("GET", url, params=params, service_headers=_token_headers(client))
+
+
 def _person(fields: Any) -> str | None:
     if not isinstance(fields, dict):
         return None
@@ -131,7 +141,7 @@ def _issue_item(issue: dict[str, Any], *, detail: bool) -> dict[str, Any]:
 
 async def _jira_session_ok(client: SafeHttpClient) -> bool:
     """Whether the current cookie jar authenticates against Jira."""
-    response = await client.request("GET", _MYSELF_URL)
+    response = await _get(client, _MYSELF_URL)
     return response.status_code == _HTTP_OK
 
 
@@ -169,8 +179,8 @@ async def search_issues(
     if start_at < 0:
         raise InvalidInputError("start_at must be >= 0")
     authenticated = await _ensure_jira_session(client)
-    response = await client.request(
-        "GET",
+    response = await _get(
+        client,
         f"{BASE}/search",
         params={
             "jql": jql,
@@ -207,13 +217,11 @@ async def get_issue(
             f"invalid issue key {issue_key!r}",
             instructions="Expected format like CMSTRACK-123 from jira_search results.",
         )
-    response = await client.request("GET", f"{BASE}/issue/{key}", params={"fields": _ISSUE_FIELDS})
+    response = await _get(client, f"{BASE}/issue/{key}", params={"fields": _ISSUE_FIELDS})
     if response.status_code in _UNAUTHORIZED_STATUSES and await client.warm_sites(
         _SESSION_WARM_URLS
     ):
-        response = await client.request(
-            "GET", f"{BASE}/issue/{key}", params={"fields": _ISSUE_FIELDS}
-        )
+        response = await _get(client, f"{BASE}/issue/{key}", params={"fields": _ISSUE_FIELDS})
     if response.status_code == _NOT_FOUND:
         raise UpstreamError(
             f"issue {key} not found or not visible",
@@ -243,11 +251,11 @@ async def get_project(
             f"invalid project key {project_key!r}",
             instructions="Project keys are uppercase Jira codes like CMSTRACK.",
         )
-    response = await client.request("GET", f"{BASE}/project/{key}")
+    response = await _get(client, f"{BASE}/project/{key}")
     if response.status_code in _UNAUTHORIZED_STATUSES and await client.warm_sites(
         _SESSION_WARM_URLS
     ):
-        response = await client.request("GET", f"{BASE}/project/{key}")
+        response = await _get(client, f"{BASE}/project/{key}")
     if response.status_code == _NOT_FOUND:
         raise UpstreamError(
             f"project {key} not found or not visible",
