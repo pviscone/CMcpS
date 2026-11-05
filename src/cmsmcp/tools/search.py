@@ -48,11 +48,13 @@ def register_search_tools(
     @server.tool(
         name="cern_search",
         description=(
-            "START HERE for 'find anything about X': searches many CERN/CMS sources in "
-            "parallel and returns one short merged list ([source] title — url (date) + "
-            "snippet), `limit` hits per source. Then open a hit with the source's own "
-            f"tools. Default sources: {', '.join(DEFAULT_SOURCES)}. All sources: {_GUIDE}. "
-            "Short keyword queries (2-5 words) work best."
+            "Search several CERN/CMS sources in parallel in one call; returns one short "
+            "merged list ([source] title — url (date) + snippet), `limit` hits per source. "
+            "Pass `sources` chosen from the question (cheapest); omit them only when you "
+            f"cannot tell where the answer lives (defaults: {', '.join(DEFAULT_SOURCES)}). "
+            "Iterate with other keywords or sources if results are thin, then open hits "
+            f"with the source's own tools. Sources: {_GUIDE}. Short keyword queries "
+            "(2-5 words) work best."
         ),
     )
     async def cern_search(

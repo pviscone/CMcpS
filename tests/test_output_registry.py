@@ -183,3 +183,13 @@ def test_secret_files_load_only_when_private(tmp_path: Path) -> None:
         assert Settings(state_dir=tmp_path).gitlab_token == "from-env"
     finally:
         del os.environ["CMSMCP_GITLAB_TOKEN"]
+
+
+def test_instructions_cover_only_enabled_groups() -> None:
+    from cmsmcp import routing  # noqa: PLC0415
+
+    full = routing.instructions(None)
+    assert "in parallel" in full and "glance_*" in full and "lxplus_*" in full
+    narrow = routing.instructions(enabled_groups(["meetings"]))
+    assert "indico_*" in narrow and "glance_*" not in narrow
+    assert len(narrow) < len(full)

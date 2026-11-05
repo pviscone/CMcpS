@@ -10,7 +10,7 @@ from typing import Annotated
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
-from cmsmcp import __version__
+from cmsmcp import __version__, routing
 from cmsmcp.auth.browser import (
     FETCH_DEFAULT_MAX_CHARS,
     FETCH_DEFAULT_TIMEOUT_SECONDS,
@@ -35,7 +35,7 @@ from cmsmcp.contracts.results import (
 from cmsmcp.net.client import SafeHttpClient
 from cmsmcp.net.safety import validate_url
 from cmsmcp.policy import Policy
-from cmsmcp.registry import CmsMcpServer
+from cmsmcp.registry import CmsMcpServer, enabled_groups
 from cmsmcp.tools import register_adapter_tools
 
 
@@ -131,39 +131,8 @@ def build_server(  # noqa: C901 - per-tool registration blocks dominate the bran
         policy=policy,
         name=runtime_settings.server_name,
         title="cmsmcp",
-        description="Read-only CERN/CMS MCP server.",
-        instructions=(
-            "Call cern_auth_sign_in first, complete the CERN browser login, "
-            "then retry protected tools. Use cern_auth_status to inspect safe session metadata. "
-            "Tool namespaces (when to use what): "
-            "indico_* = meetings, conferences, agendas, presentations/slides. "
-            "inspire_* = published HEP literature, citations, BibTeX, author metrics. "
-            "cds_* = CERN Document Server records (notes, theses, archived docs). "
-            "cmsresults_* = CMS-approved PUBLIC results pages (plots, papers per physics group). "
-            "glance_* = INTERNAL CMS analyses (CADI), analysis notes, member rosters. "
-            "discourse_* = community Q&A forums; site meanings: cms-talk = internal CMS "
-            "discussion; cms-pub-talk = internal CMS publication-review discussion (per-paper "
-            "threads, NOT public content); root-forum = ROOT software help (anonymous); "
-            "geant4-forum = Geant4 help (anonymous). "
-            "twiki_* = legacy CMS internal wiki (docs not yet migrated). "
-            "mkdocs_* = generic reader for CMS MkDocs documentation sites. "
-            "cmssearch_* = unified full-text search over CMS batch documentation. "
-            "gocms_* = CMS shortlink directory — find pages/URLs when you only know a name. "
-            "gitlab_* = CERN GitLab repos, code, repo issues/wikis. "
-            "cmssdt_* = CMSSW releases, integration builds, open PRs per release. "
-            "jira_* = CERN issue trackers (service requests, project bugs). "
-            "cmsonline_* / cmsonline_elog_* = run/fill/lumi data, shift schedules, "
-            "shift-log entries. "
-            "hltinfo_* = HLT trigger menus, paths, prescales. "
-            "das_* = dataset/block/file locations (DBS). "
-            "mcm_* = Monte-Carlo production requests (PdmV prepids). "
-            "xsdb_* = cross-section records. "
-            "websites_* = searchable inventory of centrally hosted CERN websites "
-            "(Web Services portal + crt.sh; hostname/description/owner search). "
-            "For a CMS publication's lifecycle use glance_* (internal analysis) -> "
-            "cms-pub-talk (publication-review discussion) -> cmsresults_* (approved public "
-            "page); for the published paper record itself use inspire_*."
-        ),
+        description="CERN/CMS services for the signed-in user (read; confirmed actions).",
+        instructions=routing.instructions(enabled_groups(runtime_settings.profiles)),
         version=runtime_settings.server_version or __version__,
     )
 

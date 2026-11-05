@@ -33,6 +33,7 @@ from cmsmcp.config.settings import Settings
 from cmsmcp.contracts.results import ToolEnvelope
 from cmsmcp.output import budget, render_envelope
 from cmsmcp.policy import ACT_EFFECTS, READ_EFFECTS, Effect, Policy
+from cmsmcp.routing import GROUP_GUIDE
 from cmsmcp.tools.common import failure
 
 # Tool-name prefix -> group. Unlisted prefixes are their own group.
@@ -285,7 +286,10 @@ class CmsMcpServer(MCPServer):
             counts: dict[str, int] = {}
             for info in infos:
                 counts[info.group] = counts.get(info.group, 0) + 1
-            return "groups: " + ", ".join(f"{g} ({n})" for g, n in sorted(counts.items()))
+            return "\n".join(
+                f"{g} ({n}): {GROUP_GUIDE.get(g, '')}".rstrip(": ")
+                for g, n in sorted(counts.items())
+            )
 
         def score(info: ToolInfo) -> int:
             hay = f"{info.name} {info.group} {info.description}".lower()
