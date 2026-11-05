@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -24,6 +24,9 @@ from cmsmcp.contracts.errors import (
     setup_hint,
 )
 from cmsmcp.net.safety import redact_url, validate_headers, validate_method, validate_url
+
+if TYPE_CHECKING:
+    from cmsmcp.policy import ApprovedAction
 
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _CHUNK_SIZE = 64 * 1024
@@ -474,6 +477,61 @@ class SafeHttpClient:
             headers=headers,
             authenticated=authenticated,
         )
+
+    async def request_action(
+        self,
+        approval: ApprovedAction,
+        method: str,
+        url: str,
+        *,
+        json_body: Mapping[str, Any],
+        headers: dict[str, str] | None = None,
+        authenticated: bool = True,
+        service_headers: dict[str, str] | None = None,
+    ) -> SafeResponse:
+        """Send one user-confirmed write (POST/PUT) to a host the approval covers.
+
+        The only state-changing path in the client. It requires an
+        :class:`~cmsmcp.policy.ApprovedAction` (minted only by the policy engine
+        after the user confirmed this exact action), allows only POST/PUT with a
+        JSON body, never follows redirects (a redirected write is reported, not
+        replayed), and keeps every GET-path guarantee: host allowlist, HTTPS,
+        cookie scoping, size limits.
+        """
+        from cmsmcp.policy import ApprovedAction as _Approved  # noqa: PLC0415 - avoid cycle
+
+        if not isinstance(approval, _Approved):
+            raise PolicyViolationError("writes require a user-confirmed action")
+        verb = method.upper()
+        if verb not in {"POST", "PUT"}:
+            raise PolicyViolationError(f"{verb} is not an allowed action method")
+        target = validate_url(url, allowed_hosts=self.settings.allowed_hosts)
+        host = urlsplit(target).hostname or ""
+        if not approval.allows_host(host):
+            raise PolicyViolationError(f"the confirmed action does not cover {host}")
+        request_headers: dict[str, str] = dict(validate_headers(headers))
+        if service_headers:
+            request_headers.update(service_headers)
+        if cookie := await self._cookie_for(target, authenticated=authenticated):
+            request_headers["Cookie"] = cookie
+        try:
+            async with self._client.stream(
+                verb,
+                target,
+                json=dict(json_body),
+                headers=request_headers or None,
+                timeout=self.settings.request_timeout_seconds,
+                follow_redirects=False,
+            ) as response:
+                content = await self._read_content(response, method="POST")
+                return SafeResponse(
+                    status_code=response.status_code,
+                    url=redact_url(str(response.url)),
+                    headers=self._safe_headers(response),
+                    content=content,
+                )
+        except httpx.HTTPError as exc:
+            raise _transport_error("Action", target, exc) from exc
 
     async def request_json_post(
         self,

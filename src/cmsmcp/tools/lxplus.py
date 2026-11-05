@@ -86,7 +86,43 @@ def register_lxplus_tools(  # noqa: C901 - one closure per tool
     ) -> ToolEnvelope:
         return await enveloped(lambda: lxplus.condor_history(settings, limit=limit))
 
+    @server.tool(
+        name="lxplus_crab_status",
+        description=(
+            "`crab status` of one CRAB task, run in the user's CMSSW area on lxplus "
+            "(cmssw_src = .../CMSSW_X/src; task_dir = crab project dir, relative to it or "
+            "absolute). Needs a valid grid proxy on lxplus. " + _SETUP
+        ),
+    )
+    async def lxplus_crab_status(cmssw_src: str, task_dir: str) -> ToolEnvelope:
+        return await enveloped(
+            lambda: lxplus.crab_status(settings, cmssw_src=cmssw_src, task_dir=task_dir)
+        )
+
     # ------------------------------------------------------------- actions
+    @server.tool(
+        name="lxplus_crab_resubmit",
+        effect=Effect.ACT_OWN,
+        description="`crab resubmit` the failed jobs of one CRAB task (confirmed). " + _SETUP,
+    )
+    async def lxplus_crab_resubmit(
+        cmssw_src: str, task_dir: str, ctx: Context, approval_id: _APPROVAL = None
+    ) -> ToolEnvelope:
+        async def run() -> dict:
+            approval = await policy.confirm(
+                ctx,
+                tool="lxplus_crab_resubmit",
+                summary=f"crab resubmit -d {task_dir} on lxplus",
+                details={"cmssw_src": cmssw_src, "task_dir": task_dir},
+                hosts=("lxplus",),
+                approval_id=approval_id,
+            )
+            return await lxplus.crab_resubmit(
+                settings, cmssw_src=cmssw_src, task_dir=task_dir, approval=approval
+            )
+
+        return await enveloped(run)
+
     @server.tool(
         name="lxplus_condor_submit",
         effect=Effect.ACT_OWN,

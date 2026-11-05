@@ -249,6 +249,7 @@ LXPLUS_TOOLS = {
     "lxplus_quota",
     "lxplus_condor_queue",
     "lxplus_condor_history",
+    "lxplus_crab_status",
 }
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS

@@ -260,3 +260,31 @@ async def run_command_on_lxplus(
     command = check_generic_command(command)
     result = await run_remote(settings, shell_command=command, timeout_seconds=timeout_seconds)
     return _result(command, result)
+
+
+def _crab_script(cmssw_src: str, task_dir: str, subcommand: str) -> str:
+    """CRAB inside the user's CMSSW area (cmsenv + CRAB from CVMFS)."""
+    src = check_path(cmssw_src)
+    task = check_path(task_dir) if task_dir.startswith("/") else task_dir
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", task) or ".." in task:
+        raise InvalidInputError(f"bad CRAB task directory {task_dir!r}")
+    return (
+        "source /cvmfs/cms.cern.ch/cmsset_default.sh"
+        f" && cd {shlex.quote(src)}"
+        " && eval $(scramv1 runtime -sh)"
+        " && source /cvmfs/cms.cern.ch/common/crab-setup.sh"
+        f" && crab {subcommand} -d {shlex.quote(task)}"
+    )
+
+
+async def crab_status(settings: Settings, *, cmssw_src: str, task_dir: str) -> dict[str, Any]:
+    script = _crab_script(cmssw_src, task_dir, "status")
+    return _result(f"crab status -d {task_dir}", await run_remote(settings, shell_command=script))
+
+
+async def crab_resubmit(
+    settings: Settings, *, cmssw_src: str, task_dir: str, approval: ApprovedAction
+) -> dict[str, Any]:
+    _approved(approval, "lxplus_crab_resubmit")
+    script = _crab_script(cmssw_src, task_dir, "resubmit")
+    return _result(f"crab resubmit -d {task_dir}", await run_remote(settings, shell_command=script))
