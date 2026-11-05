@@ -247,6 +247,9 @@ GATEWAY_TOOLS = {
     "github_search",
     "github_get_thread",
     "github_get_file",
+    "rucio_list_rules",
+    "rucio_get_rule",
+    "rucio_get_did",
 }
 LXPLUS_TOOLS = {
     "lxplus_eos_ls",

@@ -37,6 +37,7 @@ from cmsmcp.tools.mine import register_mine_tools
 from cmsmcp.tools.mkdocs import register_mkdocs_tools
 from cmsmcp.tools.pdftools import register_pdftools_tools
 from cmsmcp.tools.phonebook import register_phonebook_tools
+from cmsmcp.tools.rucio import register_rucio_tools
 from cmsmcp.tools.runregistry import register_runregistry_tools
 from cmsmcp.tools.search import register_search_tools
 from cmsmcp.tools.servicenow import register_servicenow_tools
@@ -59,6 +60,7 @@ def register_adapter_tools(
     register_lxplus_tools(server, settings, policy)
     register_action_tools(server, settings, auth, http, policy)
     register_github_tools(server, http)
+    register_rucio_tools(server, settings, http)
     register_indico_tools(server, settings, auth, http)
     register_inspire_tools(server, settings, auth, http)
     register_gitlab_tools(server, settings, auth, http)
