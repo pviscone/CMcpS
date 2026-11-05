@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cmsmcp"
-version = "0.2.0"
-description = "Read-only CERN/CMS MCP server with browser-backed SSO authentication"
+version = "0.3.0"
+description = "CERN/CMS MCP server: your CERN services as you, read by default, confirmed actions"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

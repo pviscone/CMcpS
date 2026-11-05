@@ -1,31 +1,57 @@
 # cmsmcp
 
-cmsmcp is a read-only Model Context Protocol server for CERN and CMS resources. It consolidates the Indico, INSPIRE-HEP, CERN GitLab, and CDS MCP servers behind one authenticated foundation: a browser-backed CERN SSO session that must be established before protected tools run.
+cmsmcp is one Model Context Protocol server that gives an AI agent access to the CERN and CMS services **you** can reach, as you: Indico, TWiki/CMS docs, GLANCE (CADI), CMS Talk, Mattermost, GitLab, GitHub (cms-sw), Jira, CDS, INSPIRE, DocDB, OMS/E-Log, Run Registry, DQM, HLT, DAS, McM, XSDB, Rucio, ServiceNow, EDMS, the Phonebook, and your lxplus files and HTCondor/CRAB jobs (~180 tools).
 
-## Requirements
+- **Your access, your credentials.** CERN SSO (browser or Kerberos + 2FA) plus optional personal tokens (GitLab, Indico, Jira, Mattermost, GitHub), a Kerberos ticket for lxplus, and a grid proxy for DAS/DQM/Rucio. Secrets stay in owner-only files; the model never sees them.
+- **Read by default, act only with your confirmation.** Write tools (post to Mattermost, comment on GitLab/Jira, submit/remove HTCondor jobs, CRAB resubmit, a shell command on lxplus) exist only when you enable actions, and every single call asks you to confirm the exact payload, outside the model.
+- **Token-efficient.** Results are compact text (not pretty-printed JSON twice), no output schemas, per-result budgets, tool profiles, an optional lazy mode, `cern_search` (many sources in one call) and `mine_overview` (your queues in one call).
 
-- Python 3.12 or newer
-- Chromium, Chrome, or another Playwright-compatible browser for interactive SSO
-- [uv](https://docs.astral.sh/uv/) for local development
-
-## Setup and run
+## Quick start
 
 ```bash
-uv sync --group dev
-uv run cmsmcp
+uv tool install --force /path/to/cmsmcp      # or: uvx --from /path/to/cmsmcp cmsmcp
+cmsmcp setup                                  # core: CERN SSO only (browser or Kerberos + 2FA)
 ```
 
-For full functionality two environment variables are needed alongside the SSO session (`cern_auth_sign_in` covers everything else):
+Register it with any MCP client as a stdio server whose command is `cmsmcp` (e.g. `{"mcpServers": {"cmsmcp": {"command": "cmsmcp"}}}`; in Claude Code: `claude mcp add cmsmcp -- cmsmcp`).
 
-- `CMSMCP_INDICO_API_TOKEN` — an Indico personal API token (`indp_...`, from indico.cern.ch → your profile → API). Without it, protected Indico events/categories are invisible (they surface as "not found").
-- `CMSMCP_GITLAB_TOKEN` — a GitLab personal access token with the `read_api` scope. Without it, internal/private GitLab projects, wikis, issues, and code search are inaccessible.
-- DAS tools require `dasgoclient`
+Setup has three tiers, and nothing optional is asked up front. A tool that needs a missing credential answers with the exact command to run.
 
-```bash
-CMSMCP_INDICO_API_TOKEN=indp_... CMSMCP_GITLAB_TOKEN=glpat-... uv run cmsmcp
-```
+| Command | Sets up |
+| --- | --- |
+| `cmsmcp setup` | CERN SSO (+ checks for the browser / Kerberos dependencies) |
+| `cmsmcp setup --tokens` | + long-lived personal API tokens: GitLab, Indico, Jira, Mattermost, GitHub |
+| `cmsmcp setup --all` | + Kerberos, lxplus, grid proxy, Rucio account, personal-data and actions policy |
+| `cmsmcp setup <step>` | one step: `sso kerberos lxplus grid gitlab indico jira mattermost github rucio policy` |
 
-The server communicates over MCP stdio. Install it as an MCP client process or run the console entry point from the command above. `python -m cmsmcp` is equivalent.
+Other commands:
+
+| Command | Purpose |
+| --- | --- |
+| `cmsmcp` | run the MCP server over stdio (what clients launch) |
+| `cmsmcp login [--otp CODE] [--force]` | CERN SSO from the terminal with your Kerberos ticket + 2FA code |
+| `cmsmcp connect` | open the lxplus connection once (Kerberos + 2FA); tools reuse it for 12 h |
+| `cmsmcp status` / `cmsmcp doctor` | what is configured / live test of every connection and token scope |
+| `cmsmcp approve [ID] [--deny]` | review actions an agent parked for your approval |
+| `cmsmcp audit [-n N]` | local log of tool calls (owner-only file) |
+| `cmsmcp logout NAME… / --all [--purge]` | remove stored credentials (and logs/caches/downloads) |
+
+Secrets live in `~/.config/cmsmcp/secrets/<field>` (mode 0600, ignored if readable by others); non-secret choices in `~/.config/cmsmcp/cmsmcp.env`. Environment variables (`CMSMCP_*`) override both. Nothing is read from the MCP client's working directory.
+
+## Using it efficiently
+
+- **Pick sources from the question.** The server instructions carry a routing guide (which group answers which kind of question) and the strategy: choose sources, run independent searches in parallel, iterate with other keywords, then open details.
+- `cern_search(query, sources=[...], limit=5)` searches several sources in one call and returns `[source] title — url (date)` + snippet lines. Defaults when the target is unknown: indico, docs (cms-search incl. TWiki), gitlab, mattermost, cms-talk, glance, inspire; optional: jira (slow), github, cds, docdb, servicenow, gocms, hypernews, cms-pub-talk, root-forum.
+- `mine_overview` returns your GitLab review requests/MRs/issues/to-dos, Jira issues and Mattermost mentions in one call.
+- `CMSMCP_PROFILES` limits the tool list (e.g. `docs,meetings,code,personal`); `CMSMCP_TOOL_MODE=lazy` lists only `cmsmcp_find_tools` / `cmsmcp_describe_tool` / `cmsmcp_call` plus core tools, for clients that load every schema up front.
+- `CMSMCP_OUTPUT_FORMAT=json` gives compact one-line JSON instead of text; `CMSMCP_MAX_RESULT_CHARS` sets the per-result budget (default 16000).
+
+## Personal data and actions
+
+- Personal content needs your opt-in (`cmsmcp setup policy` or `CMSMCP_PERSONAL_SOURCES=mattermost_dm`): Mattermost direct/group messages are hidden from search, channel history and threads otherwise.
+- Actions need `CMSMCP_ACTIONS_ENABLED=true`. Each call is confirmed by you: through the MCP client's elicitation prompt (shows the exact payload and which sources the session has read), or, with `CMSMCP_CONFIRM_MODE=approve` or clients without elicitation, out of band with `cmsmcp approve <id>`, after which the agent retries with `approval_id`. Approvals are single-use, bound to the exact parameters, and expire after 15 minutes. `CMSMCP_CONFIRM_MODE=deny` refuses all actions.
+- The only write path in the HTTP client requires a confirmation-minted `ApprovedAction` scoped to the target host; lxplus commands touching credentials are refused even when approved.
+- Retrieved content is labelled as untrusted data. cmsmcp sends content to whichever model your client uses; check CERN/CMS rules before pointing a commercial model at internal material.
 
 ### Run without a developer checkout (`uvx`)
 
@@ -64,6 +90,12 @@ Note: `uvx --from <local dir>` caches the built wheel per package *version*; sou
 - draw.io-mcp (to draw diagrams): https://github.com/jgraph/drawio-mcp
 
 Having installed on the systems tools for document manipulation like pandoc, soffice, etc. would help in case you stumble upon MS office garbage.
+
+## Requirements
+
+- Python 3.12 or newer and [uv](https://docs.astral.sh/uv/)
+- Chromium/Chrome (or another Playwright-compatible browser) for browser sign-in and SSO-rendered pages
+- Optional: `kinit`/`klist` (Kerberos), `ssh` (lxplus), the `kerberos` extra (`cmsmcp login`), a grid certificate / `voms-proxy-init`, `dasgoclient`
 
 ## Auth and bootstrap tools
 
@@ -442,6 +474,31 @@ directory.web.cern.ch is a Drupal portal whose search tabs delegate to CDS, Indi
 - `phonebook_search` — full-text search over CERN people and services: name, first/last name, email, organic unit, office location, landlines (`phone1`/`phone2`), `mobilePhone`, postbox, preferred language per hit; `type` is `PERSON` or `SERVICE`. Fixed 10 hits per page, 1-based `page`; `total_count` and `has_more` come from the backend page.
 - `phonebook_last_update` — last-update timestamp of the directory database (result freshness).
 
+## Unified search and personal overview
+
+- `cern_search` — one query over several sources in parallel (see *Using it efficiently*); failing sources report one line each and never fail the search. Mattermost direct messages are included only with the `mattermost_dm` opt-in.
+- `mine_overview` — GitLab MRs awaiting your review / assigned / authored, assigned issues, to-dos; Jira issues assigned to or reported by you; Mattermost posts mentioning you in the last `days`.
+
+## lxplus tools (Kerberos SSH)
+
+lxplus asks for a second factor after Kerberos, so cmsmcp never logs in unattended: `cmsmcp connect` opens an SSH control master once (kinit + 2FA code) and every tool reuses it for `CMSMCP_LXPLUS_PERSIST` (default 12h). Requires `CMSMCP_LXPLUS_USER` (`cmsmcp setup lxplus`).
+
+- `lxplus_eos_ls`, `lxplus_read_file` (text, bounded), `lxplus_download_file` (into local storage), `lxplus_quota`, `lxplus_condor_queue`, `lxplus_condor_history`, `lxplus_crab_status` (in your CMSSW area).
+- Actions (confirmed): `lxplus_condor_submit`, `lxplus_condor_remove`, `lxplus_crab_resubmit`, `lxplus_run` (one shell command; commands touching tickets, keytabs, SSH/grid keys or cmsmcp secrets are refused).
+- Paths are restricted to `/eos`, `/afs`, `/cvmfs` without traversal; every remote argument is shell-quoted.
+
+## GitHub tools (api.github.com; cms-sw/cmssw by default)
+
+- `github_search` (PRs, issues; code with a token), `github_get_thread` (PR/issue with discussion, bots skipped, review comments with paths, merge state and files), `github_get_file` (numbered 300-line windows at a ref). Anonymous works (rate-limited); `cmsmcp setup github` adds a read-only fine-grained token. CERN cookies are never sent.
+
+## Rucio tools (cms-rucio.cern.ch)
+
+- `rucio_list_rules` (your rules, by state / name), `rucio_get_rule`, `rucio_get_did` (dataset metadata + placing rules). X.509 login with the grid certificate/proxy on the auth host only; needs `cmsmcp setup grid` and `cmsmcp setup rucio`.
+
+## Action tools (only with actions enabled; each confirmed)
+
+- `mattermost_post` (message or thread reply; the confirmation names the channel and its type), `gitlab_comment` (issue or MR), `gitlab_create_issue` (GitLab token with `api` scope), `jira_comment` (Jira token), plus the lxplus actions above.
+
 ## Configuration
 
 Configuration uses environment variables with the `CMSMCP_` prefix. Common settings:
@@ -470,23 +527,34 @@ Configuration uses environment variables with the `CMSMCP_` prefix. Common setti
 | `CMSMCP_WEBSITES_CACHE_MAX_AGE_DAYS` | `30` | Inventory cache age after which searches auto-refresh |
 | `CMSMCP_MATTERMOST_BASE_URL` | `https://mattermost.web.cern.ch` | CERN Mattermost instance |
 | `CMSMCP_MATTERMOST_TOKEN` | unset | Optional Mattermost personal access token (normally the SSO-minted `MMAUTHTOKEN` cookie is used) |
+| `CMSMCP_JIRA_TOKEN` / `CMSMCP_GITHUB_TOKEN` | unset | Optional Jira / GitHub personal tokens |
+| `CMSMCP_CONFIG_DIR` | `~/.config/cmsmcp` | Secret files (`secrets/`) and the setup config file (`cmsmcp.env`) |
+| `CMSMCP_OUTPUT_FORMAT` | `text` | `text` (compact) or `json` (one compact line) |
+| `CMSMCP_MAX_RESULT_CHARS` | `16000` | Per-result character budget |
+| `CMSMCP_PROFILES` | `all` | Tool groups/profiles to expose (`search docs meetings literature analysis code chat ops compute mine personal`, or group names) |
+| `CMSMCP_TOOL_MODE` | `direct` | `lazy` hides non-core tools behind find/describe/call |
+| `CMSMCP_PERSONAL_SOURCES` | empty | Opt-ins for personal content, e.g. `mattermost_dm` |
+| `CMSMCP_ACTIONS_ENABLED` | `false` | Register write tools |
+| `CMSMCP_CONFIRM_MODE` | `elicit` | `elicit`, `approve` (always `cmsmcp approve`), or `deny` |
+| `CMSMCP_AUDIT_ENABLED` | `true` | Local audit log of tool calls |
+| `CMSMCP_LXPLUS_USER` / `CMSMCP_LXPLUS_HOST` / `CMSMCP_LXPLUS_PERSIST` | unset / `lxplus.cern.ch` / `12h` | lxplus SSH target and connection lifetime |
+| `CMSMCP_RUCIO_ACCOUNT` | lxplus user | Rucio account |
 
-Service tokens come only from these namespaced environment variables and are injected by the trusted HTTP layer; they are never accepted as tool arguments, mixed into unrelated origins, or written to logs.
+Service tokens come only from these namespaced environment variables or the private secret files written by `cmsmcp setup`, and are injected by the trusted HTTP layer; they are never accepted as tool arguments, mixed into unrelated origins, or written to logs.
 
-`CMSMCP_REQUIRE_SSO=false` exists only for offline/public-endpoint development and must not be used as a substitute for the intended CERN flow. Configuration is read from the process environment only; cmsmcp does not implicitly trust a `.env` file from an MCP client's launch directory.
+`CMSMCP_REQUIRE_SSO=false` exists only for offline/public-endpoint development and must not be used as a substitute for the intended CERN flow. Configuration is read from the process environment, the fixed `~/.config/cmsmcp/cmsmcp.env` written by `cmsmcp setup`, and owner-only secret files; cmsmcp never reads a `.env` file from an MCP client's launch directory.
 
 The session store and its state directory are written with owner-only permissions. It contains browser cookies and should be treated as a credential file. Logs and tool outputs expose only metadata and redacted URLs, never cookie or authorization values.
 
 ## Safety model
 
-- MCP tools are read-only by design.
-- The shared HTTP layer accepts only `GET` and `HEAD` requests, plus an explicit, host-allowlisted set of read-only JSON/form POST *query* endpoints (ServiceNow portal search, CMS Online portlet forms, Mattermost post search); mutating methods remain rejected.
-- Requests are constrained to configured host allowlists.
-- Authenticated cookies are injected only after RFC 6265 host-only/domain and path-boundary checks.
+- Reads are the default; every tool declares an effect class (`read`, `read-personal`, `act-own`, `act-external`) and the server, not the prompt, enforces it.
+- The shared HTTP layer accepts `GET`/`HEAD`, an explicit host-allowlisted set of read-only JSON/form POST *query* endpoints (ServiceNow portal search, CMS Online portlet forms, Mattermost post search), and one write path that requires a user-confirmed, host-scoped `ApprovedAction`; writes never follow redirects.
+- Requests are constrained to configured host allowlists; authenticated cookies are injected only after RFC 6265 host/domain and path checks; personal tokens are sent only to their own service.
 - Saved browser state is minimized to allowlisted cookies; localStorage origins are never persisted.
-- Redirects are bounded and checked again before following.
-- Response and download sizes are bounded; downloads stay inside cmsmcp state storage. Download name collisions are resolved by content (SHA-256): identical payloads reuse the existing file, distinct payloads get a `name-1.ext`-style unique suffix — nothing is silently overwritten.
-- Secrets, absolute credential paths, and session payloads are excluded from logs, errors, and tool results.
+- Redirects are bounded and re-checked; response and download sizes are bounded; downloads stay inside cmsmcp state storage (collisions resolved by SHA-256, nothing silently overwritten).
+- Network failures are reported as retryable `UPSTREAM_ERROR`, never disguised as policy violations.
+- Secrets, absolute credential paths, and session payloads are excluded from logs, errors, the audit log, and tool results.
 
 ## Tests
 

@@ -1,6 +1,6 @@
 # cmsmcp Delivery Plan
 
-Build one read-only MCP server for CERN/CMS research and operations resources.
+Build one MCP server for CERN/CMS research and operations resources that acts as the signed-in user: read by default, write only through the confirmed-action path described in *Gateway rework* below.
 
 ## Scope
 
@@ -30,6 +30,8 @@ Then add read-only search/detail/download tools for:
 - https://gocms.cern.ch/
 
 All tools are strictly read-only. Tools retrieve metadata, records, search results, HTML/text, PDFs, images, and plots. They must not create, update, delete, comment, vote, transition, upload, or change remote state.
+
+Exception (gateway rework): tools declared `act-own`/`act-external` may write, but only when `CMSMCP_ACTIONS_ENABLED=true`, only after a per-call human confirmation obtained outside the model (MCP elicitation or `cmsmcp approve`), and only through `SafeHttpClient.request_action` / the lxplus runner, which require a host-scoped `ApprovedAction`. Never add a write path that bypasses `Policy.confirm`.
 
 ## Delivery strategy
 
@@ -199,7 +201,18 @@ A milestone is done only when all are true:
 - Large downloads can exhaust MCP transport/context. Control: return metadata plus a bounded local file path by default; return inline bytes only for small files with an explicit size cap.
 - MCP cannot guarantee clients call auth first. Control: authenticate each call in the server and return actionable `AUTH_REQUIRED` rather than trusting client call order.
 
-## Current status — M2 complete, M3 mostly delivered
+## Gateway rework (branch `gateway`) — current
+
+Goal: one generic MCP server (not client-specific) with everything a CMS physicist can access, as them, token-efficiently.
+
+- **Token efficiency** (`registry.py`, `output.py`): every `@server.tool` goes through `CmsMcpServer.tool`, which registers unstructured tools (no outputSchema, no duplicate structuredContent), strips schema titles, renders results as compact text (`output_format=json` for one compact JSON line) under `max_result_chars`, audits, and tracks taint. Listing went 345k -> ~146k chars (182 tools). `CMSMCP_PROFILES` restricts groups; `CMSMCP_TOOL_MODE=lazy` exposes only find/describe/call + core.
+- **Routing** (`routing.py`): one-line guide per group + question-type routes + search strategy (pick sources from the prompt, parallel independent searches, iterate, open details); generates the server instructions for enabled groups only. `cern_search` (adapters/search.py) fans out over chosen sources; `mine_overview` (adapters/mine.py) covers the user's queues.
+- **Policy** (`policy.py`): effect classes `read`/`read-personal`/`act-own`/`act-external`; personal opt-ins (`mattermost_dm`); confirmation via elicitation or out-of-band `cmsmcp approve` (single-use, parameter-bound, 15 min); local `audit.jsonl`.
+- **Credentials/CLI** (`credentials.py`, `cli.py`): `cmsmcp setup` (SSO only) / `--tokens` / `--all` / `<step>`; optional credentials are requested on demand through `setup_hint()` errors. `status`, `doctor` (live, GitLab write-scope check), `connect` (lxplus SSH master; lxplus needs 2FA after Kerberos), `approve`, `audit`, `logout`. Secrets in `~/.config/cmsmcp/secrets/` (0600), options in `~/.config/cmsmcp/cmsmcp.env`.
+- **New adapters**: lxplus (EOS/AFS/quota/HTCondor/CRAB + confirmed submit/remove/resubmit/run), GitHub (ported from cernscout, Apache-2.0, same author), Rucio (x509 token login), web actions (Mattermost post, GitLab comment/issue, Jira comment).
+- Tests: hermetic (`CMSMCP_CONFIG_DIR` temp dir, `CMSMCP_OUTPUT_FORMAT=json`); `envelope()` helpers parse results. Live-verified: `cern_search` (7 sources, 3.6 s), `cmsmcp status`; lxplus/Rucio/actions fixture-tested (lxplus needs the user's 2FA via `cmsmcp connect`).
+
+## Earlier status — M2 complete, M3 mostly delivered
 
 M1 and M2 are implemented and green. M1 (auth foundation) is unchanged in behavior; M2 added the consolidated Indico, INSPIRE-HEP, CERN GitLab, and CDS read-only tools on that foundation.
 

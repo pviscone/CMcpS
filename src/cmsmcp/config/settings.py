@@ -221,7 +221,7 @@ class Settings(BaseSettings):
     max_redirects: int = Field(default=5, ge=0, le=10)
     sso_poll_seconds: float = Field(default=1.0, gt=0.1, le=10)
     server_name: str = "cmsmcp"
-    server_version: str = "0.1.0"
+    server_version: str = "0.3.0"
 
     # M2 adapter endpoints and service-specific tokens. Tokens come only from
     # environment configuration and are injected by the trusted HTTP layer;

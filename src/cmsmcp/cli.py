@@ -217,8 +217,8 @@ class Setup:
                 + "\n  cmsmcp setup --all       everything (tokens, Kerberos, lxplus, grid, ...)"
             )
         self.io.say(
-            "\nAdd cmsmcp to your MCP client, e.g. Claude Code:\n"
-            "  claude mcp add cmsmcp -- uvx --from <path-or-git-url> cmsmcp\n"
+            "\nRegister cmsmcp with your MCP client as a stdio server with command `cmsmcp`\n"
+            "  (e.g. Claude Code: claude mcp add cmsmcp -- cmsmcp).\n"
             "Run `cmsmcp doctor` any time to test every connection."
         )
         return 0
