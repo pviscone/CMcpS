@@ -1,21 +1,21 @@
 # M2 reference-tool migration matrix
 
-Maps every tool of the four reference MCP servers to the consolidated CMcpS
+Maps every tool of the four reference MCP servers to the consolidated cmsmcp
 namespace, including intentional removals.
 
 ## indico-mcp (InnovateInfinity87/indico-mcp, MIT, © 2024 CERN EPA-WP8)
 
-| Reference tool            | CMcpS tool                     | Notes |
+| Reference tool            | cmsmcp tool                     | Notes |
 |---------------------------|--------------------------------|-------|
-| `configure`               | removed                        | Replaced by env config `CMCPS_INDICO_BASE_URL` / `CMCPS_INDICO_API_TOKEN` |
-| `get_user_info`           | `indico_get_user_info`         | Requires `CMCPS_INDICO_API_TOKEN` |
+| `configure`               | removed                        | Replaced by env config `CMSMCP_INDICO_BASE_URL` / `CMSMCP_INDICO_API_TOKEN` |
+| `get_user_info`           | `indico_get_user_info`         | Requires `CMSMCP_INDICO_API_TOKEN` |
 | `search_events`           | `indico_search_events`         | Legacy export API; `limit`/`offset` pagination, normalized `SearchResult` envelope |
 | `search_categories`       | merged into `indico_search_events` | Same `/export/categ/{id}.json` endpoint; removed as duplicate |
 | `search_events_by_term`   | `indico_search`                | `/search/api/search`, one call per content type |
 | `get_event_details`       | `indico_get_event`             | Optional contributions/sessions |
 | `get_event_contributions` | `indico_get_event_contributions` | Optional subcontributions |
 | `get_files`               | `indico_get_event_files`       | Returns metadata + download URLs only, never inline content |
-| `download_attachment`     | `indico_download_file`         | Bounded local download into CMcpS storage; returns path + size, never inline bytes/base64 |
+| `download_attachment`     | `indico_download_file`         | Bounded local download into cmsmcp storage; returns path + size, never inline bytes/base64 |
 | `search_rooms`            | removed                        | Stub in reference ("not yet implemented"); room booking is write-capable domain |
 | `create_event`            | removed                        | Stub; would be a write |
 | `book_room`               | removed                        | Stub; would be a write; needs legacy 40-char API key |
@@ -23,12 +23,12 @@ namespace, including intentional removals.
 
 Protected events/categories are invisible to the legacy export API unless the
 request carries an Indico personal API token (`Authorization: Bearer`), set via
-`CMCPS_INDICO_API_TOKEN`; without it they return `200` with `count: 0` and the
+`CMSMCP_INDICO_API_TOKEN`; without it they return `200` with `count: 0` and the
 adapter answers "not found" plus configuration instructions.
 
 ## inspirehep-mcp (MohamedElashri/inspirehep-mcp, AGPL-3.0 — clean-room)
 
-| Reference tool | CMcpS tool | Notes |
+| Reference tool | cmsmcp tool | Notes |
 |----------------|------------|-------|
 | `search_papers` | `inspire_search_papers` | Adds explicit `page` parameter |
 | `get_paper_details` | `inspire_get_paper` | inspire_id / arxiv_id / doi |
@@ -41,7 +41,7 @@ adapter answers "not found" plus configuration instructions.
 
 ## cerngitlab-mcp (MohamedElashri/cerngitlab-mcp, AGPL-3.0 — clean-room)
 
-| Reference tool | CMcpS tool | Notes |
+| Reference tool | cmsmcp tool | Notes |
 |----------------|------------|-------|
 | `test_connectivity` | removed | Duplicates `cern_health` |
 | `search_projects` | `gitlab_search_projects` | |
@@ -61,7 +61,7 @@ adapter answers "not found" plus configuration instructions.
 
 ## cds-mcp (MohamedElashri/cds-mcp, license ambiguous: README claims MIT, no LICENSE file — clean-room)
 
-| Reference tool | CMcpS tool | Notes |
+| Reference tool | cmsmcp tool | Notes |
 |----------------|------------|-------|
 | `search_cds_documents` | `cds_search` | Adds `page` parameter (`jrec`) |
 | `get_cds_document_details` | `cds_get_record` | Accepts `123456` or `cds:123456` |
@@ -78,8 +78,8 @@ Cross-cutting normalizations:
 - Reference error strings/`{error: ...}` dicts became structured
   `ToolEnvelope` failures: `UPSTREAM_ERROR` (retryable on 429/5xx),
   `INVALID_INPUT`, `AUTH_REQUIRED`.
-- File downloads return local paths under CMcpS download storage only;
+- File downloads return local paths under cmsmcp download storage only;
   no inline base64, no placeholder text for binaries (GitLab's text decode
   for text files preserved because no local file is involved).
 - Every tool is gated on `cern_auth_sign_in` unless
-  `CMCPS_REQUIRE_SSO=false` is explicitly set for development.
+  `CMSMCP_REQUIRE_SSO=false` is explicitly set for development.

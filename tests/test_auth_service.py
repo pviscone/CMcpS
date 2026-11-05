@@ -9,10 +9,10 @@ from typing import Any
 
 import pytest
 
-from cmcps.auth.service import AuthService
-from cmcps.auth.tokens import ServiceTokenRecord
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import AuthRequiredError, InvalidInputError
+from cmsmcp.auth.service import AuthService
+from cmsmcp.auth.tokens import ServiceTokenRecord
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import AuthRequiredError, InvalidInputError
 
 
 async def test_sign_in_collects_and_stores_state(
@@ -142,7 +142,7 @@ async def test_sign_in_reports_sso_host_missing_from_allowlist(tmp_path: Path) -
     auth = AuthService(settings, collector=collector)
     with pytest.raises(InvalidInputError) as exc_info:
         await auth.sign_in()
-    assert "CMCPS_ALLOWED_HOSTS" in (exc_info.value.instructions or "")
+    assert "CMSMCP_ALLOWED_HOSTS" in (exc_info.value.instructions or "")
 
 
 async def test_sign_in_persists_only_allowlisted_cookie_state(

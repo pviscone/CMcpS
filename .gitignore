@@ -15,7 +15,7 @@ htmlcov/
 !.env.example
 dist/
 
-# CMcpS local state and captured credentials
+# cmsmcp local state and captured credentials
 cern-sso-storage-state.json
 downloads/
 *.part

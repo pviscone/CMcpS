@@ -1,4 +1,4 @@
-# CMcpS Delivery Plan
+# cmsmcp Delivery Plan
 
 Build one read-only MCP server for CERN/CMS research and operations resources.
 
@@ -170,8 +170,8 @@ Implementation rules:
 - Read-only safety tests: every adapter proves it issues no mutating method/body and each MCP tool inherits the auth guard.
 - Integration tests: server startup, tool listing, schema generation, auth-required behavior, and representative tool calls with mocked transports.
 - Live optional tests:
-  - `CMCPS_LIVE_PUBLIC=1`
-  - `CMCPS_LIVE_CERN=1` after interactive SSO
+  - `CMSMCP_LIVE_PUBLIC=1`
+  - `CMSMCP_LIVE_CERN=1` after interactive SSO
   - no live tests in the default suite.
 - Manual verification after each milestone:
   - start the real server;
@@ -220,17 +220,17 @@ M1 and M2 are implemented and green. M1 (auth foundation) is unchanged in behavi
 
 After a real SSO session became available, the two deferred platforms were delivered plus the SDT dashboard surface was completed:
 
-- `glance_*` (11): ALCM/CADI and Membership SPAs at cmsfence.cern.ch use per-app Keycloak **Bearer** tokens (audiences `cms-alcm-api-prod` / `cms-membership-api-prod`) issued via RFC 8693 token exchange; tokens are minted lazily on first use (`BEARER_SERVICES` + `capture_bearer_service`), refresh goes through refresh→re-exchange (`BEARER_SERVICE_EXCHANGE_AUDIENCES`) because a plain refresh loses the API audience. Cookie-only calls answer 401. Env fallbacks `CMCPS_GLANCE_ALCM_TOKEN`/`CMCPS_GLANCE_MEMBERSHIP_TOKEN`. `glance_search_notes` needs `CMCPS_MAX_RESPONSE_BYTES` > ~16 MB (single ~15 MB upstream index). Incubator SPA not implemented (nothing useful read-only).
+- `glance_*` (11): ALCM/CADI and Membership SPAs at cmsfence.cern.ch use per-app Keycloak **Bearer** tokens (audiences `cms-alcm-api-prod` / `cms-membership-api-prod`) issued via RFC 8693 token exchange; tokens are minted lazily on first use (`BEARER_SERVICES` + `capture_bearer_service`), refresh goes through refresh→re-exchange (`BEARER_SERVICE_EXCHANGE_AUDIENCES`) because a plain refresh loses the API audience. Cookie-only calls answer 401. Env fallbacks `CMSMCP_GLANCE_ALCM_TOKEN`/`CMSMCP_GLANCE_MEMBERSHIP_TOKEN`. `glance_search_notes` needs `CMSMCP_MAX_RESPONSE_BYTES` > ~16 MB (single ~15 MB upstream index). Incubator SPA not implemented (nothing useful read-only).
 - `cmssearch_*` (4): FastAPI "CERN Batch Docs Search" (public OpenAPI, Keycloak-proxied) — search, document, sources, index stats. Cookie SSO suffices.
 - `cmssdt_*` extended (+7, now 8): IB queues, per-arch latest-IB summary, IB comparison details, CMSSW labels, open PRs per release family, RelVal archs, and a pure-derivation build-log URL tool.
 - `docdb_*` (4): CMS DocDB (cms-docdb.cern.ch) is Perl-CGI HTML-only; GET search (Keycloak blocks the POST form), ShowDocument metadata parse, see-recent list, RetrieveFile downloads. cms-docdb serves a CERN Grid CA host certificate absent from certifi, so the shared client now uses the system CA store. Live-verified (LAGG document 14372: search, get, PDF download).
 - `hypernews_*` (6): CMS HyperNews archive (hypernews.cern.ch) — discontinued end of 2022 in favor of CMS Talk (2022 overlap year; stated in every tool description). HyperNewsViewer is HTML-only behind OAuth-proxy SSO; FTS5 search (50/page, dates clamped to 2000-2022), forums by activity+category, forum threads, message detail (header/body/replies, "Unable to find message" 200 → 404-class error, missing forum/member → 500), member profiles (username passed as query *key*), AUX attachment extraction (case-insensitive, relative+absolute) and bounded downloads. Live-verified end to end (search, forums, message, member, 717 KB attachment download).
 - `eguide_*` (4): CERN Admin e-guide (Drupal, Keycloak-gated search/index nodes); search, A-Z procedure index, procedure detail with related links, bounded downloads. Live-verified.
-- `mattermost_*` (9): CERN Mattermost (mattermost.web.cern.ch, stock API v4); me/user/teams/channels/channel detail, post search (read-only JSON POST, allowlisted + warm-retried; cookie-auth POSTs need `X-Requested-With: XMLHttpRequest` — verified; results clamp to 100 hits), channel history with before/after cursors, thread reads, bounded file downloads. Verified fork quirks handled: teams/channels endpoints ignore `page`/`per_page` (tools expose no paging; channels returns the account-wide list including DMs — filtered to the requested team client-side). Auth is the `MMAUTHTOKEN` cookie from the `/oauth/gitlab/login` handshake (mm-auth.web.cern.ch brokers to auth.cern.ch — silently warmed from the stored identity as a `_COOKIE_ONLY_SITES` entry); `CMCPS_MATTERMOST_TOKEN` PAT fallback. Anonymous API → JSON 401; 403 stays a permission error. Live-verified end to end (get_me, get_user, teams, channels, channel detail, channel history, thread, search, 218 KB attachment download).
+- `mattermost_*` (9): CERN Mattermost (mattermost.web.cern.ch, stock API v4); me/user/teams/channels/channel detail, post search (read-only JSON POST, allowlisted + warm-retried; cookie-auth POSTs need `X-Requested-With: XMLHttpRequest` — verified; results clamp to 100 hits), channel history with before/after cursors, thread reads, bounded file downloads. Verified fork quirks handled: teams/channels endpoints ignore `page`/`per_page` (tools expose no paging; channels returns the account-wide list including DMs — filtered to the requested team client-side). Auth is the `MMAUTHTOKEN` cookie from the `/oauth/gitlab/login` handshake (mm-auth.web.cern.ch brokers to auth.cern.ch — silently warmed from the stored identity as a `_COOKIE_ONLY_SITES` entry); `CMSMCP_MATTERMOST_TOKEN` PAT fallback. Anonymous API → JSON 401; 403 stays a permission error. Live-verified end to end (get_me, get_user, teams, channels, channel detail, channel history, thread, search, 218 KB attachment download).
 - `servicenow_*` (3): CERN Service Portal (cern.service-now.com ServiceNow SP 1.x). The SPA never forces SSO for HTTP clients — anonymous hits get a guest context (silent empty search results, verified) — so the ServiceNow session is planted by a headless SAML drive (`auth/browser.py:_COOKIE_ONLY_SITES`, `kb_search.do` → `saml_redirector.do`) and probed before searching (`<table>.do?JSONv2` sentinel lookup). Search is `POST /api/now/sp/search` (captured from authenticated SPA traffic; GET 405) — routed through the new `SafeHttpClient.request_json_post` allowlisted to this host (read-only POST precedent alongside the CMS Online form-POST). Results carry grouped hits (kb/actions/items/service_elements/outages/external_actions/information), no paging/totals (backend limitation, `pagination_supported=false`). Article reads use the legacy `kb_knowledge.do?JSONv2` exact-key lookups (`sysparm_fields`/`sysparm_limit` NOT honored — full-field, up-to-50-record responses; `/api/now/v1/table/*` 401s even in-session). Live-verified (KB search → article detail with category resolution → full portal search).
 - `runregistry_*` (6): CMS Run Registry (cmsrunregistry.web.cern.ch, oauth2-proxy Keycloak gate `cmsrunregistry-sso-proxy`; `_COOKIE_ONLY_SITES` warm plants chunked `_oauth2_proxy_<n>` cookies). Filtered listings are read-only JSON POST query-by-body (allowlisted `request_json_post`, `{"page","page_size","filter","sortings"}` body, `{"err":...}` filter errors mapped); GET covers per-run dataset names. Typed filter args → backend keys (`rr_attributes.`/`oms_attributes.`/`triplet_summary.<ws>-<col>.<STATUS>` `{">":0}`); runs search/detail, certification-dataset names/search/detail, lumisection certification ranges (optionally grouped by component). JSON-portal generation and mutating routes intentionally skipped. Live-verified.
-- `phonebook_*` (2): CERN Phonebook (phonebook.cern.ch), the unique backend of the directory.web.cern.ch portal (its CDS/Indico/Service-Portal/Map tabs delegate to existing adapters). Private JSON API recovered from the production SPA bundle: `GET /api/search?query=<q>&page=<n>` (Spring page, fixed size 10 — `size` param ignored; PERSON rows carry the full contact record: name, email, organicUnit, office, landlines/mobile as {displayNumber, fullNumber}, postBox, preferredLanguage; SERVICE rows carry name/email/snowId) plus `GET /api/search/lastUpdate`. Bearer-only like hltinfo: the SPA's Keycloak public client `phonebook` token is minted headlessly on first use (new `BEARER_SERVICES` entry, no RFC 8693 audience exchange); the metadata's `tls_client_certificate_bound_access_tokens` flag is not enforced (verified live). 1-based tool `page` → 0-based backend; `has_more` from `last`. Env fallback `CMCPS_PHONEBOOK_TOKEN`. Live-verified end to end (search, lastUpdate, forced-expiry silent refresh).
-- uvx: `uvx --from <path-or-git-url> cmcps` verified (106 tools over stdio); plain `uvx cmcps` awaits a PyPI publish.
+- `phonebook_*` (2): CERN Phonebook (phonebook.cern.ch), the unique backend of the directory.web.cern.ch portal (its CDS/Indico/Service-Portal/Map tabs delegate to existing adapters). Private JSON API recovered from the production SPA bundle: `GET /api/search?query=<q>&page=<n>` (Spring page, fixed size 10 — `size` param ignored; PERSON rows carry the full contact record: name, email, organicUnit, office, landlines/mobile as {displayNumber, fullNumber}, postBox, preferredLanguage; SERVICE rows carry name/email/snowId) plus `GET /api/search/lastUpdate`. Bearer-only like hltinfo: the SPA's Keycloak public client `phonebook` token is minted headlessly on first use (new `BEARER_SERVICES` entry, no RFC 8693 audience exchange); the metadata's `tls_client_certificate_bound_access_tokens` flag is not enforced (verified live). 1-based tool `page` → 0-based backend; `has_more` from `last`. Env fallback `CMSMCP_PHONEBOOK_TOKEN`. Live-verified end to end (search, lastUpdate, forced-expiry silent refresh).
+- uvx: `uvx --from <path-or-git-url> cmsmcp` verified (106 tools over stdio); plain `uvx cmsmcp` awaits a PyPI publish.
 
 157 tools total (5 bootstrap + 152 adapter); full suite/lint/build green; SDT/GLANCE/CMS-search/DocDB/HyperNews/ServiceNow/Mattermost/Run-Registry/Phonebook live-verified with an SSO session (GLANCE through the refresh→exchange chain).
 
@@ -238,7 +238,7 @@ After a real SSO session became available, the two deferred platforms were deliv
 
 - `261 passed`; ruff lint + format clean; `uv build` succeeds.
 - Stdio smoke: 69 tools listed; all M3 tools auth-gated in `ADAPTER_CALLS`.
-- Live public smokes (`CMCPS_REQUIRE_SSO=false`): Discourse (root-forum search→topic), cms-results (groups/papers/detail), Twiki (anonymous topic list + rendered page), McM (request/status/output/produces), SDT (release filters), goCMS (links/tags/detail).
+- Live public smokes (`CMSMCP_REQUIRE_SSO=false`): Discourse (root-forum search→topic), cms-results (groups/papers/detail), Twiki (anonymous topic list + rendered page), McM (request/status/output/produces), SDT (release filters), goCMS (links/tags/detail).
 - New dependency: `defusedxml` (SDT XML parsing).
 
 M2 sections below are unchanged.
@@ -248,14 +248,14 @@ M2 sections below are unchanged.
 - 31 adapter tools under four namespaces, all behind the SSO guard:
   - `indico_*` (7): user info, category event search, full-text search, event detail, contributions, event files, bounded downloads.
   - `inspire_*` (8): paper search/detail, author papers, citations, collaborations, figures, references, BibTeX.
-  - `gitlab_*` (12): project search/info, tree/file/readme, code and issue search, wiki, branches, releases, tags. Optional `CMCPS_GITLAB_TOKEN` (PAT, `PRIVATE-TOKEN` header).
+  - `gitlab_*` (12): project search/info, tree/file/readme, code and issue search, wiki, branches, releases, tags. Optional `CMSMCP_GITLAB_TOKEN` (PAT, `PRIVATE-TOKEN` header).
   - `cds_*` (4): search, record detail, file links, bounded downloads with iCMS stub detection. Legacy `of=recjson` endpoint; Anubis HTML detected with browser-sign-in guidance.
 - Shared plumbing:
-  - `SearchResult` envelope (`cmcps/contracts/results.py`) for every search/list tool.
-  - `UpstreamError` contract (retryable on 429/5xx) plus `cmcps/adapters/common.py` JSON decoding.
+  - `SearchResult` envelope (`cmsmcp/contracts/results.py`) for every search/list tool.
+  - `UpstreamError` contract (retryable on 429/5xx) plus `cmsmcp/adapters/common.py` JSON decoding.
   - `SafeHttpClient.request(..., service_headers=...)` injects operator-configured tokens from `Settings` only; tool arguments still cannot supply credential headers.
   - `SafeHttpClient.download` follows bounded redirects with per-hop cookie re-scoping.
-  - Tool registration split by backend into `src/cmcps/tools/{indico,inspire,gitlab,cds}.py` via `register_adapter_tools` in `src/cmcps/tools/__init__.py`.
+  - Tool registration split by backend into `src/cmsmcp/tools/{indico,inspire,gitlab,cds}.py` via `register_adapter_tools` in `src/cmsmcp/tools/__init__.py`.
 - Docs: `README.md` tool inventory + config table, `.env.example`, migration matrix with intentional removals at `docs/m2-migration.md`.
 
 ### M2 verification
@@ -263,7 +263,7 @@ M2 sections below are unchanged.
 - `144 passed` (adapter fixture tests, auth-gate parametrization over all 30 tools, server/stdio integration).
 - Ruff lint and format checks pass; `uv build` succeeds.
 - Manual stdio smoke: 33 tools listed; unauthenticated `cds_get_record`/`gitlab_get_project` return `AUTH_REQUIRED`.
-- Live public smoke with `CMCPS_REQUIRE_SSO=false`: real INSPIRE search returned parsed papers and a working `inspire_get_bibtex` round trip.
+- Live public smoke with `CMSMCP_REQUIRE_SSO=false`: real INSPIRE search returned parsed papers and a working `inspire_get_bibtex` round trip.
 
 ### M2 known boundaries
 
@@ -273,16 +273,16 @@ M2 sections below are unchanged.
 
 ### Important implementation files (M2)
 
-- `src/cmcps/adapters/{indico,inspire,gitlab,cds,common}.py` — backend logic.
-- `src/cmcps/tools/{indico,inspire,gitlab,cds,common}.py` + `__init__.py` — MCP registration and guard wiring.
+- `src/cmsmcp/adapters/{indico,inspire,gitlab,cds,common}.py` — backend logic.
+- `src/cmsmcp/tools/{indico,inspire,gitlab,cds,common}.py` + `__init__.py` — MCP registration and guard wiring.
 - `tests/test_adapter_{indico,inspire,gitlab,cds}.py` — fixture/contract tests with `httpx.MockTransport`.
 - `tests/test_server.py` — `ADAPTER_CALLS` parametrized auth-gate proofs; `ALL_TOOLS` inventory assertion.
 
 ### M3 starting instructions
 
 - Follow the M3 adapter lifecycle (discover → define smallest read-only surface → implement → fixture-test → document) for the platforms listed above, starting with the generic Discourse adapter (`cms-talk`, `cms-pub-talk`, `root-forum`, `geant4-forum`).
-- New adapters: add `src/cmcps/adapters/<name>.py`, `src/cmcps/tools/<name>.py`, `tests/test_adapter_<name>.py`; register in `src/cmcps/tools/__init__.py`; extend `ADAPTER_CALLS`/`ALL_TOOLS` in `tests/test_server.py`; document in `README.md`.
-- New non-`*.cern.ch` hosts must be added to `DEFAULT_ALLOWED_HOSTS` in `src/cmcps/config/settings.py`.
+- New adapters: add `src/cmsmcp/adapters/<name>.py`, `src/cmsmcp/tools/<name>.py`, `tests/test_adapter_<name>.py`; register in `src/cmsmcp/tools/__init__.py`; extend `ADAPTER_CALLS`/`ALL_TOOLS` in `tests/test_server.py`; document in `README.md`.
+- New non-`*.cern.ch` hosts must be added to `DEFAULT_ALLOWED_HOSTS` in `src/cmsmcp/config/settings.py`.
 
 ### M1 delivered
 
@@ -308,7 +308,7 @@ M2 sections below are unchanged.
   - RFC 6265 cookie domain/path matching;
   - per-redirect auth re-scoping;
   - bounded redirects, response sizes, and downloads;
-  - downloads constrained to CMcpS state storage.
+  - downloads constrained to cmsmcp state storage.
 - Credential-redaction and output hygiene:
   - cookie/authorization headers rejected from adapter callers;
   - CERN tickets, SAML artifacts, JWTs, assertions, tokens, sessions, keys, and signatures redacted from URLs;
@@ -333,14 +333,14 @@ M2 sections below are unchanged.
 
 ### Important implementation files
 
-- `src/cmcps/app.py` — MCP tool registration and server startup.
-- `src/cmcps/auth/browser.py` — visible CERN SSO collection.
-- `src/cmcps/auth/service.py` — auth lifecycle and server-side guard.
-- `src/cmcps/auth/store.py` — minimized/atomic credential persistence and cookie scoping.
-- `src/cmcps/config/settings.py` — environment-backed typed settings.
-- `src/cmcps/net/safety.py` — URL, method, header, and redaction policy.
-- `src/cmcps/net/client.py` — policy-bound async HTTP/download layer.
-- `src/cmcps/contracts/` — stable errors and tool result envelopes.
+- `src/cmsmcp/app.py` — MCP tool registration and server startup.
+- `src/cmsmcp/auth/browser.py` — visible CERN SSO collection.
+- `src/cmsmcp/auth/service.py` — auth lifecycle and server-side guard.
+- `src/cmsmcp/auth/store.py` — minimized/atomic credential persistence and cookie scoping.
+- `src/cmsmcp/config/settings.py` — environment-backed typed settings.
+- `src/cmsmcp/net/safety.py` — URL, method, header, and redaction policy.
+- `src/cmsmcp/net/client.py` — policy-bound async HTTP/download layer.
+- `src/cmsmcp/contracts/` — stable errors and tool result envelopes.
 - `tests/` — M1 unit, contract, security, and real stdio integration tests.
 
 ### Reference-repository audit constraints for M2
@@ -359,7 +359,7 @@ M2 sections below are unchanged.
 2. Reuse `AuthService`, `SafeHttpClient`, `ToolEnvelope`, settings, and safety contracts; do not create adapter-specific raw HTTP or credential handling.
 3. Implement one backend at a time with URL/parser tests using recorded fixtures.
 4. Add server tests proving every new tool is auth-gated and read-only.
-5. Keep public-service development behind explicit `CMCPS_REQUIRE_SSO=false`; default behavior must remain SSO-first.
+5. Keep public-service development behind explicit `CMSMCP_REQUIRE_SSO=false`; default behavior must remain SSO-first.
 6. Update `README.md` tool inventory and the retained/removed reference-tool migration matrix as each backend lands.
 7. The only M1 gap requiring the user's real credentials is a completed live CERN SSO login; browser launch and timeout paths were verified, but no personal credential login was performed in this session.
 
@@ -369,5 +369,5 @@ M2 sections below are unchanged.
 uv sync --group dev
 uv run pytest
 uv run ruff check .
-uv run cmcps
+uv run cmsmcp
 ```

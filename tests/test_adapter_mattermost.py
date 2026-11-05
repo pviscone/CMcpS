@@ -9,11 +9,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cmcps.adapters import mattermost
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import AuthRequiredError, InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import mattermost
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import AuthRequiredError, InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -345,6 +345,11 @@ async def test_search_posts_posts_json_and_orders_results(tmp_path: Path) -> Non
         )
 
     router.add("POST", f"/api/v4/teams/{TEAM_ID}/posts/search", search)
+    router.add(
+        "GET",
+        f"/api/v4/users/me/teams/{TEAM_ID}/channels",
+        lambda _r: httpx.Response(200, json=[CHANNEL_DOC]),
+    )
     client = make_client(tmp_path, router)
     result = await mattermost.search_posts(
         client,
@@ -365,7 +370,8 @@ async def test_search_posts_posts_json_and_orders_results(tmp_path: Path) -> Non
         }
     ]
     # The CERN fork 401s on cookie-auth POSTs without this header.
-    assert router.requests[-1].headers["X-Requested-With"] == "XMLHttpRequest"
+    (post,) = [r for r in router.requests if r.method == "POST"]
+    assert post.headers["X-Requested-With"] == "XMLHttpRequest"
     # Below the ~100-hit server cap: the result set is exhausted.
     assert result.has_more is False
     # Items follow the backend's order list, not dict order.
@@ -396,10 +402,68 @@ async def test_search_posts_at_cap_marks_has_more(tmp_path: Path) -> None:
         f"/api/v4/teams/{TEAM_ID}/posts/search",
         lambda _r: httpx.Response(200, json={"order": order, "posts": posts}),
     )
+    router.add(
+        "GET",
+        f"/api/v4/users/me/teams/{TEAM_ID}/channels",
+        lambda _r: httpx.Response(200, json=[CHANNEL_DOC]),
+    )
     client = make_client(tmp_path, router)
     result = await mattermost.search_posts(client, client.settings, team_id=TEAM_ID, terms="hit")
     assert len(result.items) == cap
     assert result.has_more is True
+
+
+DM_CHANNEL_ID = "d" * 26
+GM_CHANNEL_ID = "g" * 26
+
+
+def _dm_search_router() -> Router:
+    """A search page mixing a team-channel hit with DM and group-message hits."""
+    router = Router()
+    router.add("GET", f"/api/v4/teams/{TEAM_ID}", lambda _r: httpx.Response(200, json=TEAM_DOC))
+    posts = {
+        POST_ID_1: POST_DOC_1,
+        POST_ID_2: {**POST_DOC_2, "channel_id": DM_CHANNEL_ID},
+        POST_ID_3: {**POST_DOC_3, "channel_id": GM_CHANNEL_ID},
+    }
+    router.add(
+        "POST",
+        f"/api/v4/teams/{TEAM_ID}/posts/search",
+        lambda _r: httpx.Response(
+            200, json={"order": [POST_ID_3, POST_ID_2, POST_ID_1], "posts": posts}
+        ),
+    )
+    # Verified fork quirk: the per-team list is account-wide (DMs/GMs included).
+    channels = [
+        CHANNEL_DOC,
+        {**CHANNEL_DOC, "id": DM_CHANNEL_ID, "team_id": "", "type": "D", "name": "a__b"},
+        {**CHANNEL_DOC, "id": GM_CHANNEL_ID, "team_id": "", "type": "G", "name": "grp"},
+    ]
+    router.add(
+        "GET",
+        f"/api/v4/users/me/teams/{TEAM_ID}/channels",
+        lambda _r: httpx.Response(200, json=channels),
+    )
+    return router
+
+
+async def test_search_posts_hides_direct_and_group_messages_by_default(tmp_path: Path) -> None:
+    client = make_client(tmp_path, _dm_search_router())
+    result = await mattermost.search_posts(client, client.settings, team_id=TEAM_ID, terms="x")
+    assert [item["post_id"] for item in result.items] == [POST_ID_1]
+    assert result.size == 1
+    assert "2 direct/group message hit(s)" in (result.note or "")
+
+
+async def test_search_posts_include_direct_messages_keeps_them(tmp_path: Path) -> None:
+    router = _dm_search_router()
+    client = make_client(tmp_path, router)
+    result = await mattermost.search_posts(
+        client, client.settings, team_id=TEAM_ID, terms="x", include_direct_messages=True
+    )
+    assert [item["post_id"] for item in result.items] == [POST_ID_3, POST_ID_2, POST_ID_1]
+    # No channel lookup is needed when nothing is filtered.
+    assert not any(r.url.path.endswith("/channels") for r in router.requests)
 
 
 async def test_search_posts_rejects_empty_terms_and_bad_ids(tmp_path: Path) -> None:

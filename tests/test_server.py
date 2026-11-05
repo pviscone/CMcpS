@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from cmcps.app import build_server
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
+from cmsmcp.app import build_server
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
 
 BOOTSTRAP_TOOLS = {
     "cern_auth_sign_in",

@@ -13,11 +13,11 @@ from typing import Any
 import httpx
 import pytest
 
-from cmcps.adapters import websites
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import websites
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 TEST_TOKEN = "unit-test-token"  # noqa: S105 - mock credential, not a real secret
 

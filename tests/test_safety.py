@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from cmcps.contracts.errors import PolicyViolationError
-from cmcps.net.safety import (
+from cmsmcp.contracts.errors import PolicyViolationError
+from cmsmcp.net.safety import (
     host_matches,
     redact_url,
     validate_headers,

@@ -11,17 +11,17 @@ from typing import Any
 import httpx
 import pytest
 
-from cmcps.auth import service as service_module
-from cmcps.auth.service import AuthService
-from cmcps.auth.tokens import (
+from cmsmcp.auth import service as service_module
+from cmsmcp.auth.service import AuthService
+from cmsmcp.auth.tokens import (
     ServiceTokenRecord,
     ServiceTokenStore,
     exchange_for_audience,
     parse_token_exchange,
     refresh_record,
 )
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import (
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import (
     BrowserUnavailableError,
     InvalidInputError,
     PolicyViolationError,

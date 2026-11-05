@@ -8,12 +8,12 @@ from typing import Any
 
 from playwright.async_api import Error as PlaywrightError
 
-from cmcps.app import build_server
-from cmcps.auth import browser as browser_module
-from cmcps.auth.browser import fetch_page_text
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import BrowserUnavailableError
+from cmsmcp.app import build_server
+from cmsmcp.auth import browser as browser_module
+from cmsmcp.auth.browser import fetch_page_text
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import BrowserUnavailableError
 
 
 def _settings(tmp_path: Path, **kwargs: Any) -> Settings:

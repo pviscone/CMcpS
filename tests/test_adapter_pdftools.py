@@ -7,9 +7,9 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from cmcps.adapters import pdftools
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, PolicyViolationError, RequestTooLargeError
+from cmsmcp.adapters import pdftools
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, PolicyViolationError, RequestTooLargeError
 
 PAGE_W, PAGE_H = 400.0, 600.0
 FIG_RECT = (100.0, 200.0, 300.0, 400.0)

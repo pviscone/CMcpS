@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cmcps.contracts.results import (
+from cmsmcp.contracts.results import (
     MAX_ENVELOPE_JSON_BYTES,
     ErrorCode,
     ToolEnvelope,

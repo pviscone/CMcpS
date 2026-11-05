@@ -1,0 +1,49 @@
+"""Shared helpers for adapter tool registration modules."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from pydantic import BaseModel
+
+from cmsmcp.auth.service import AuthService
+from cmsmcp.contracts.errors import CMSMCPError
+from cmsmcp.contracts.results import ErrorCode, ErrorPayload, ToolEnvelope
+
+
+def failure(exc: Exception) -> ToolEnvelope:
+    """Map an exception to a secret-free tool failure envelope."""
+    if isinstance(exc, CMSMCPError):
+        return ToolEnvelope.failure(exc.to_payload())
+    return ToolEnvelope.failure(
+        ErrorPayload(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="The operation failed without exposing internal details",
+            retryable=False,
+        )
+    )
+
+
+async def enveloped(call: Callable[[], Awaitable[BaseModel | dict[str, Any]]]) -> ToolEnvelope:
+    """Run an adapter call with the uniform envelope but without the SSO guard.
+
+    For tools authenticated by something other than the CERN SSO session
+    (for example the DAS tools, which use a local grid client certificate).
+    """
+    try:
+        return ToolEnvelope.success(await call())
+    except Exception as exc:
+        return failure(exc)
+
+
+async def guarded(
+    auth: AuthService,
+    call: Callable[[], Awaitable[BaseModel | dict[str, Any]]],
+) -> ToolEnvelope:
+    """Run an adapter call behind the SSO guard with a uniform envelope."""
+    try:
+        await auth.ensure_authenticated()
+        return ToolEnvelope.success(await call())
+    except Exception as exc:
+        return failure(exc)

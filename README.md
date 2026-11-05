@@ -1,6 +1,6 @@
-# CMcpS
+# cmsmcp
 
-CMcpS is a read-only Model Context Protocol server for CERN and CMS resources. It consolidates the Indico, INSPIRE-HEP, CERN GitLab, and CDS MCP servers behind one authenticated foundation: a browser-backed CERN SSO session that must be established before protected tools run.
+cmsmcp is a read-only Model Context Protocol server for CERN and CMS resources. It consolidates the Indico, INSPIRE-HEP, CERN GitLab, and CDS MCP servers behind one authenticated foundation: a browser-backed CERN SSO session that must be established before protected tools run.
 
 ## Requirements
 
@@ -12,20 +12,20 @@ CMcpS is a read-only Model Context Protocol server for CERN and CMS resources. I
 
 ```bash
 uv sync --group dev
-uv run cmcps
+uv run cmsmcp
 ```
 
 For full functionality two environment variables are needed alongside the SSO session (`cern_auth_sign_in` covers everything else):
 
-- `CMCPS_INDICO_API_TOKEN` — an Indico personal API token (`indp_...`, from indico.cern.ch → your profile → API). Without it, protected Indico events/categories are invisible (they surface as "not found").
-- `CMCPS_GITLAB_TOKEN` — a GitLab personal access token with the `read_api` scope. Without it, internal/private GitLab projects, wikis, issues, and code search are inaccessible.
+- `CMSMCP_INDICO_API_TOKEN` — an Indico personal API token (`indp_...`, from indico.cern.ch → your profile → API). Without it, protected Indico events/categories are invisible (they surface as "not found").
+- `CMSMCP_GITLAB_TOKEN` — a GitLab personal access token with the `read_api` scope. Without it, internal/private GitLab projects, wikis, issues, and code search are inaccessible.
 - DAS tools require `dasgoclient`
 
 ```bash
-CMCPS_INDICO_API_TOKEN=indp_... CMCPS_GITLAB_TOKEN=glpat-... uv run cmcps
+CMSMCP_INDICO_API_TOKEN=indp_... CMSMCP_GITLAB_TOKEN=glpat-... uv run cmsmcp
 ```
 
-The server communicates over MCP stdio. Install it as an MCP client process or run the console entry point from the command above. `python -m cmcps` is equivalent.
+The server communicates over MCP stdio. Install it as an MCP client process or run the console entry point from the command above. `python -m cmsmcp` is equivalent.
 
 ### Run without a developer checkout (`uvx`)
 
@@ -33,11 +33,11 @@ The server communicates over MCP stdio. Install it as an MCP client process or r
 
 ```bash
 # from a checkout
-uvx --from /path/to/CMcpS cmcps
+uvx --from /path/to/cmsmcp cmsmcp
 
 # or install once, then run anywhere
-uv tool install --force /path/to/CMcpS
-cmcps
+uv tool install --force /path/to/cmsmcp
+cmsmcp
 ```
 
 MCP client configuration example:
@@ -45,19 +45,19 @@ MCP client configuration example:
 ```json
 {
   "mcpServers": {
-    "cmcps": {
+    "cmsmcp": {
       "command": "uvx",
-      "args": ["--from", "/path/to/CMcpS", "cmcps"]
+      "args": ["--from", "/path/to/cmsmcp", "cmsmcp"]
     }
   }
 }
 ```
 
-Plain `uvx cmcps` (no `--from`) resolves the name from PyPI and only works once the package is published there. When using git hosting instead, `uvx --from git+https://<host>/<org>/CMcpS.git cmcps` works the same way. The first run needs a Playwright-compatible system browser (Chromium/Chrome/Firefox) for `cern_auth_sign_in`; the server auto-detects installed browsers in the uvx environment.
+Plain `uvx cmsmcp` (no `--from`) resolves the name from PyPI and only works once the package is published there. When using git hosting instead, `uvx --from git+https://<host>/<org>/cmsmcp.git cmsmcp` works the same way. The first run needs a Playwright-compatible system browser (Chromium/Chrome/Firefox) for `cern_auth_sign_in`; the server auto-detects installed browsers in the uvx environment.
 
-Note: `uvx --from <local dir>` caches the built wheel per package *version*; source changes without a version bump keep serving the old build until you run `uv cache clean cmcps` (or bump the version).
+Note: `uvx --from <local dir>` caches the built wheel per package *version*; source changes without a version bump keep serving the old build until you run `uv cache clean cmsmcp` (or bump the version).
 
-#### Other relevant MCP servers to use along CmcpS
+#### Other relevant MCP servers to use along cmsmcp
 - google_workspace_mcp (be carefull with permissions): https://github.com/taylorwilsdon/google_workspace_mcp
 - overleaf_mcp (to be enabled per project): https://github.com/mjyoo2/OverleafMCP
 - hepdata-mcp: https://github.com/HEPData/hepdata-mcp
@@ -72,13 +72,26 @@ Having installed on the systems tools for document manipulation like pandoc, sof
 - `cern_auth_reauthenticate` — discards the stored session cookies and captured service Bearer tokens, then runs a fresh visible-browser sign-in. Use when `cern_auth_sign_in` keeps reusing a broken session.
 - `cern_health` — protected smoke tool proving the authentication guard, read-only safety policy, and server wiring after sign-in.
 - `cern_fetch_page` — renders one SSO-protected page in a headless browser through the stored session and returns its visible text. Covers cookie-based sites and Keycloak-PKCE single-page apps whose token exchange completes silently (plain GET-based tools cannot read either). `wait_for` waits for a case-insensitive substring before returning (use for SPA content); `auth_divert=true` in the result means the page landed on the SSO login and the stored session needs a fresh `cern_auth_sign_in`. URLs that serve binary files (PDFs, archives) are detected — Chromium aborts their navigation — and reported with a pointer to `cern_download_file` instead of a misleading stale-session hint.
-- `cern_download_file` — downloads one file hosted on an allowlisted CERN site into CMcpS download storage through the stored SSO session (cookies re-scoped per redirect hop), returning the local path and size; use it for the binary URLs `cern_fetch_page` cannot render.
+- `cern_download_file` — downloads one file hosted on an allowlisted CERN site into cmsmcp download storage through the stored SSO session (cookies re-scoped per redirect hop), returning the local path and size; use it for the binary URLs `cern_fetch_page` cannot render.
 
-MCP does not guarantee client-side call order, so CMcpS enforces authentication server-side. Every adapter tool returns a structured `AUTH_REQUIRED` result until `cern_auth_sign_in` completes.
+### Terminal sign-in with Kerberos (`cmsmcp login`)
+
+An alternative to `cern_auth_sign_in` that never shows a browser window: your `kinit` ticket replaces the username/password screen and the 2FA one-time code is typed into the terminal. The session goes into the same store the MCP server reads, so a running server picks it up on its next call.
+
+```bash
+uv sync --extra kerberos          # once; builds python-gssapi (needs libkrb5-dev)
+kinit <username>@CERN.CH
+uv run --extra kerberos cmsmcp login              # prompts: CERN 2FA code:
+uv run --extra kerberos cmsmcp login --otp 123456 # no interactive terminal (e.g. Claude Code `!`)
+```
+
+`--force` replaces a still-valid session (like `cern_auth_reauthenticate`, it discards the old session first). Only authenticator-app codes are supported; accounts using a hardware security key need the browser sign-in. The SPNEGO token is generated with python-gssapi rather than the browser's own Negotiate support (stock Linux Chrome fails to initialise GSSAPI) and is attached only to the Kerberos realm request on the SSO host. Success requires the browser to return to the start site — Keycloak sets the identity cookie before the 2FA step finishes, so the cookie alone is not proof of login.
+
+MCP does not guarantee client-side call order, so cmsmcp enforces authentication server-side. Every adapter tool returns a structured `AUTH_REQUIRED` result until `cern_auth_sign_in` completes.
 
 ## Indico tools (indico.cern.ch)
 
-`CMCPS_INDICO_API_TOKEN` (Indico personal API token, `indp_...`, created at indico.cern.ch → your profile → API) is optional for public data, **required for protected events and categories**, and for `indico_get_user_info`. The legacy export API ignores SSO cookies: without the token, protected content looks like "not found" (`200` with `count: 0`), which the adapter reports with setup instructions. When the token is set it is the only credential sent to Indico — the server answers HTTP 400 to requests carrying both cookies and a Bearer token.
+`CMSMCP_INDICO_API_TOKEN` (Indico personal API token, `indp_...`, created at indico.cern.ch → your profile → API) is optional for public data, **required for protected events and categories**, and for `indico_get_user_info`. The legacy export API ignores SSO cookies: without the token, protected content looks like "not found" (`200` with `count: 0`), which the adapter reports with setup instructions. When the token is set it is the only credential sent to Indico — the server answers HTTP 400 to requests carrying both cookies and a Bearer token.
 
 - `indico_get_user_info` — profile of the configured API-token user.
 - `indico_search_events` — events in a category (legacy export API, `category_id`, date range, `limit`/`offset`).
@@ -86,7 +99,7 @@ MCP does not guarantee client-side call order, so CMcpS enforces authentication 
 - `indico_get_event` — one event, optionally with contributions and sessions.
 - `indico_get_event_contributions` — talks of an event, optionally subcontributions.
 - `indico_get_event_files` — attachment metadata and download URLs for an event and its contributions.
-- `indico_download_file` — bounded download of one attachment URL into local CMcpS storage; returns the local path and size, never inline content.
+- `indico_download_file` — bounded download of one attachment URL into local cmsmcp storage; returns the local path and size, never inline content.
 
 ## INSPIRE-HEP tools (inspirehep.net/api)
 
@@ -108,10 +121,10 @@ GitLab API access does **not** use the CERN SSO browser session: two independent
 - The SSO sign-in flow never visits `gitlab.cern.ch`, so the stored session state never contains `_gitlab_session` (or any GitLab-scoped cookie). The persisted session holds cookies only for `auth.cern.ch` and the SSO-warmed sites (Indico, its.cern.ch, the CMS forums, the HLT-info and CMSFence apps, ...).
 - Even with a session cookie, the GitLab API ignores browser cookies for most endpoints; requests stay anonymous and private projects answer `404`.
 
-Facts about `CMCPS_GITLAB_TOKEN`:
+Facts about `CMSMCP_GITLAB_TOKEN`:
 
 - Create the token at `gitlab.cern.ch` → Preferences → Personal access tokens (direct URL: `https://gitlab.cern.ch/-/user_settings/personal_access_tokens`) with the **`read_api`** scope.
-- Set it as the `CMCPS_GITLAB_TOKEN` environment variable; it is sent as the `PRIVATE-TOKEN` header and injected only by the trusted HTTP layer — never accepted as a tool argument, never logged.
+- Set it as the `CMSMCP_GITLAB_TOKEN` environment variable; it is sent as the `PRIVATE-TOKEN` header and injected only by the trusted HTTP layer — never accepted as a tool argument, never logged.
 - Without it: public project search, repository trees, public merge-request lists, and public file contents work anonymously. Private projects answer `404` and never appear in search results.
 - Required for: `gitlab_search_issues`, `gitlab_get_wiki`, anything on private/internal projects (including `gitlab_list_merge_requests`), and code search (`gitlab_search_code` needs a token on CERN GitLab and advanced search for blobs).
 - `gitlab_search_projects` returns every project visible to the authenticated identity (public ones anonymously, internal/private ones with the token); pass `visibility` to restrict the listing.
@@ -143,9 +156,9 @@ Legacy Invenio search API. CDS occasionally serves an Anubis bot challenge to no
 - `cds_search` — document search with experiment / document-type / date filters.
 - `cds_get_record` — full record by recid (`123456` or `cds:123456`).
 - `cds_get_files` — attachment metadata and download links for a record (links only).
-- `cds_download_file` — bounded download of one attachment URL into local CMcpS storage; returns the local path and size. Restricted records and attachments (e.g. CWR paper drafts) require the cds.cern.ch SSO cookies captured by `cern_auth_sign_in`; a missing/expired session is detected (iCMS login placeholder / login HTML) and reported instead of returning HTML as a file.
+- `cds_download_file` — bounded download of one attachment URL into local cmsmcp storage; returns the local path and size. Restricted records and attachments (e.g. CWR paper drafts) require the cds.cern.ch SSO cookies captured by `cern_auth_sign_in`; a missing/expired session is detected (iCMS login placeholder / login HTML) and reported instead of returning HTML as a file.
 
-All search/list tools share the `SearchResult` envelope (`source, items, total_count, page, size, has_more, query, sort, note`). The mapping of every original reference-server tool to its CMcpS tool (including intentional removals) is documented in [docs/m2-migration.md](docs/m2-migration.md).
+All search/list tools share the `SearchResult` envelope (`source, items, total_count, page, size, has_more, query, sort, note`). The mapping of every original reference-server tool to its cmsmcp tool (including intentional removals) is documented in [docs/m2-migration.md](docs/m2-migration.md).
 
 ## CERN Discourse forum tools (4 sites, one adapter)
 
@@ -157,7 +170,7 @@ Stock Discourse JSON API. `cms-talk` (CMS internal discussion) and `cms-pub-talk
 - `discourse_get_topic` — topic detail plus one page of posts as plain text (HTML stripped, ~20 posts per page, attachments listed per post).
 - `discourse_get_post` — single post with plain text and raw markdown when public.
 - `discourse_get_user` — public user profile summary.
-- `discourse_download_file` — bounded attachment/image download into local CMcpS storage (forum-host URLs only).
+- `discourse_download_file` — bounded attachment/image download into local cmsmcp storage (forum-host URLs only).
 
 ## CMS public results tools (cms-results.web.cern.ch)
 
@@ -217,7 +230,7 @@ login-required (anonymous calls answer JSON `401`). Authentication is the
 `MMAUTHTOKEN` session cookie minted by the OAuth handshake at
 `/oauth/gitlab/login` (mm-auth.web.cern.ch brokers to auth.cern.ch, so it
 completes silently against the stored SSO identity): the shared client warms
-and retries it headlessly. `CMCPS_MATTERMOST_TOKEN` (a Mattermost personal
+and retries it headlessly. `CMSMCP_MATTERMOST_TOKEN` (a Mattermost personal
 access token from your profile → Security → Personal Access Tokens) is an
 optional `Authorization: Bearer` fallback, injected only by the trusted HTTP
 layer. All listings take a required `team_id`/ids from earlier results; every
@@ -244,14 +257,14 @@ McM's own **public REST API index** (`/mcm/public/restapi/`) requires no SSO. Fu
 
 ## CMS DAS tools (cmsweb.cern.ch/das)
 
-DAS QL via the local `dasgoclient` CLI (`dasgoclient -json`), spawned per call with a timeout and output cap. Auth is a **grid client certificate**, not the SSO session: the runner injects `X509_USER_CERT`/`X509_USER_KEY` from `CMCPS_GRID_CERT_FILE`/`CMCPS_GRID_KEY_FILE` (default `~/.globus/usercert.pem`/`userkey.pem`; a plain `voms-proxy-init` proxy also works). Locate the binary via `CMCPS_DASGOCLIENT_PATH` if it is not on PATH. These two tools are intentionally *not* behind the CERN SSO guard.
+DAS QL via the local `dasgoclient` CLI (`dasgoclient -json`), spawned per call with a timeout and output cap. Auth is a **grid client certificate**, not the SSO session: the runner injects `X509_USER_CERT`/`X509_USER_KEY` from `CMSMCP_GRID_CERT_FILE`/`CMSMCP_GRID_KEY_FILE` (default `~/.globus/usercert.pem`/`userkey.pem`; a plain `voms-proxy-init` proxy also works). Locate the binary via `CMSMCP_DASGOCLIENT_PATH` if it is not on PATH. These two tools are intentionally *not* behind the CERN SSO guard.
 
 - `das_search` — DAS QL: `dataset=/TT*/RunII*/AODSIM`, `block`, `site`, `file`, `run`, `lumi`. Offset paging (`idx`), limit ≤ 50, rows deduplicated per replica; `has_more` from a limit+1 probe (`-json` has no `nresults`, so `total_count` is null).
 - `das_get_dataset_info` — exact dataset attribute record (no wildcards).
 
 ## CMS DQM GUI tools (cmsweb.cern.ch/dqm)
 
-Data Quality Monitoring histograms of the DQM GUI — `offline` (PromptReco real data), `online`, `relval`, `relval-test`, `offline-test`, `dev` — through the legacy GUI JSON API (`/data/json`, `/jsonfairy`, `/plotfairy`; the newer `/api/v1` routes are not deployed on cmsweb). Auth is a **grid client certificate over TLS**, not the SSO session: the cmsweb front-end has no cookie login flow and answers every unauthenticated request `401`. The shared client loads `CMCPS_GRID_CERT_FILE`/`CMCPS_GRID_KEY_FILE` (default `~/.globus/usercert.pem`/`userkey.pem`; a `voms-proxy-init` proxy also works) into a lazy SSL context used only for hosts in `CMCPS_GRID_CERT_HOSTS` (default `cmsweb.cern.ch`). These tools are intentionally *not* behind the CERN SSO guard. Verified upstream quirks handled: `match` is a Python **regex** (`re.search`, not glob — write `.*` for wildcards); every (run, dataset) pair is validated against the samples index first because the archive endpoint replies 200 with *another* sample's content for unknown pairs; plotfairy replies 200 with a small placeholder PNG for missing MEs or missing `w`/`h`, so plots pre-verify the ME and always send explicit dimensions.
+Data Quality Monitoring histograms of the DQM GUI — `offline` (PromptReco real data), `online`, `relval`, `relval-test`, `offline-test`, `dev` — through the legacy GUI JSON API (`/data/json`, `/jsonfairy`, `/plotfairy`; the newer `/api/v1` routes are not deployed on cmsweb). Auth is a **grid client certificate over TLS**, not the SSO session: the cmsweb front-end has no cookie login flow and answers every unauthenticated request `401`. The shared client loads `CMSMCP_GRID_CERT_FILE`/`CMSMCP_GRID_KEY_FILE` (default `~/.globus/usercert.pem`/`userkey.pem`; a `voms-proxy-init` proxy also works) into a lazy SSL context used only for hosts in `CMSMCP_GRID_CERT_HOSTS` (default `cmsweb.cern.ch`). These tools are intentionally *not* behind the CERN SSO guard. Verified upstream quirks handled: `match` is a Python **regex** (`re.search`, not glob — write `.*` for wildcards); every (run, dataset) pair is validated against the samples index first because the archive endpoint replies 200 with *another* sample's content for unknown pairs; plotfairy replies 200 with a small placeholder PNG for missing MEs or missing `w`/`h`, so plots pre-verify the ME and always send explicit dimensions.
 
 - `dqm_list_samples` — `(run, lumi, dataset)` samples; `match` regex and/or exact `run` required (an unfiltered query returns ~140 MB upstream).
 - `dqm_get_workspace` — folder listing of one sample: subfolders and monitoring elements with ROOT type, entries, axis stats, quality tests; `folder` descends, `search` filters ME names.
@@ -293,10 +306,10 @@ Custom JSON API v0 (routes recovered from the service frontend bundle; see [docs
 Credential resolution (first match wins):
 
 1. On first use the HLT app root is re-opened **headlessly** against the stored SSO session and its Keycloak token exchange captured (access + refresh token, client id, token endpoint), stored in `cern-service-tokens.json` (0600). Expired tokens are refreshed silently via `grant_type=refresh_token`; no browser needed until the refresh token dies.
-2. Fallback: `CMCPS_HLTINFO_TOKEN` manually set to a valid token.
+2. Fallback: `CMSMCP_HLTINFO_TOKEN` manually set to a valid token.
 
 - `hltinfo_list_menus` — HLT menus known to the service.
-- `hltinfo_get_path_summary` — per-year path summary as file + metadata: rows (per-path lumi counts, datasets, run spans) are written to CMcpS download storage, the result carries years/counts/truncation and the file path only; optional `year` and `pathname_contains` filters.
+- `hltinfo_get_path_summary` — per-year path summary as file + metadata: rows (per-path lumi counts, datasets, run spans) are written to cmsmcp download storage, the result carries years/counts/truncation and the file path only; optional `year` and `pathname_contains` filters.
 - `hltinfo_get_path_names` — path names, optional simple filter.
 - `hltinfo_get_path` — full path record (versions, filters, per-run data).
 - `hltinfo_get_path_prescales` — prescale values over a run range.
@@ -318,20 +331,20 @@ GLANCE exposes separate Keycloak **Bearer-only** APIs per application — browse
 - **ALCM** (CADI/analysis-note registry, audience `cms-alcm-api-prod`)
 - **Membership** (audience `cms-membership-api-prod`)
 
-Tokens are **minted lazily on first API use**: the call re-opens the app root headlessly against the stored SSO session and captures its token exchange (same mechanism as the HLT info token capture); expiring access tokens refresh silently afterwards. Manual fallbacks: `CMCPS_GLANCE_ALCM_TOKEN` / `CMCPS_GLANCE_MEMBERSHIP_TOKEN`.
+Tokens are **minted lazily on first API use**: the call re-opens the app root headlessly against the stored SSO session and captures its token exchange (same mechanism as the HLT info token capture); expiring access tokens refresh silently afterwards. Manual fallbacks: `CMSMCP_GLANCE_ALCM_TOKEN` / `CMSMCP_GLANCE_MEMBERSHIP_TOKEN`.
 
 - `glance_alcm_user`, `glance_membership_user` — current user record in each app.
 - `glance_search_analyses` — analysis search with the same fields as the ALCM analysis page (`custom`, `code`, `title`, `stage`, `working_group`, `contacts`, `start_date`/`end_date` on registration date, `sort_by`/`sort_order`); the API has no server search, so filters run client-side over the full list, paginated.
 - `glance_get_analysis` — full analysis-page profile by code (`EXO-24-010`) or numeric id: identity/dates/authors/abstract, ARC review committee (chair/LEs/members), paper info, workflow (stage, entry conditions, past events), analysis history, attachments (document versions, GitLab repos, Indico contributions, related-note documents), hashtags, and a derived `links` block (`pubtalk_forum`, `public_result`, `twiki`) built exactly as the page builds them. Support-endpoint failures surface per-section as `{"error": ...}`, never silently.
 - `glance_list_published_analyses` — published analyses; filters incl. `has_arxiv`.
 - `glance_list_note_types` — note types (Analysis Note, Conference Report, …).
-- `glance_search_notes` — search notes by `title_contains`/`working_group`/`type_name`/`project`. The upstream index is one ~15 MB payload fetched in full per call: raise `CMCPS_MAX_RESPONSE_BYTES` above ~16 MB to use it (documented in the tool description; no silent truncation).
+- `glance_search_notes` — search notes by `title_contains`/`working_group`/`type_name`/`project`. The upstream index is one ~15 MB payload fetched in full per call: raise `CMSMCP_MAX_RESPONSE_BYTES` above ~16 MB to use it (documented in the tool description; no silent truncation).
 - `glance_get_note` — note detail by numeric id, composed with the note's attachments (`attachments.documents[].versions`), workflow tracker (`transitions/{note_id}`), and update history (`notes/{note_id}/history` — rows can carry editor comments).
 - `glance_list_projects` — ALCM projects with e-groups.
 - `glance_list_alcm_working_groups` — working groups, `kind=physics|non-physics|all`.
 - `glance_alcm_members` — ALCM member roster, substring name filter.
 - `glance_membership_search_members` — CMS member search by name (`query` required), paginated client-side.
-- `glance_download_attachment` — download one GLANCE attachment version (PAPER/PAS drafts, analysis-note PDFs, CWR documents) into CMcpS storage by exact version `filename` (e.g. `HIG-23-004-paper-v10.pdf`). `analysis` accepts codes with slashes (`CMS CR-2026/251`, percent-encoded into the `ancode` path segment) and, for a numeric value that is not an analysis id, falls back to the standalone-note id — note attachments download the same way via `attachments/documents/entity/{note_id}`. The files are served from `cms-alcm.web.cern.ch` behind SSO **session cookies** (not Bearer tokens): the sign-in cookie capture includes that host, and an HTML login page is detected and reported instead of being saved as a file.
+- `glance_download_attachment` — download one GLANCE attachment version (PAPER/PAS drafts, analysis-note PDFs, CWR documents) into cmsmcp storage by exact version `filename` (e.g. `HIG-23-004-paper-v10.pdf`). `analysis` accepts codes with slashes (`CMS CR-2026/251`, percent-encoded into the `ancode` path segment) and, for a numeric value that is not an analysis id, falls back to the standalone-note id — note attachments download the same way via `attachments/documents/entity/{note_id}`. The files are served from `cms-alcm.web.cern.ch` behind SSO **session cookies** (not Bearer tokens): the sign-in cookie capture includes that host, and an HTML login page is detected and reported instead of being saved as a file.
 
 ## CMS DocDB tools (cms-docdb.cern.ch)
 
@@ -349,7 +362,7 @@ CERN's Engineering Data Management Service (specifications, drawings, traveller 
 - `edms_search_text` — **full-text search** (the only EDMS text search; the REST WS has none): renders the deep-linkable UI results page headlessly through the SSO session and parses the document grid. DOM-coupled fallback (an EDMS UI redeploy can break the parser, which fails empty instead of mis-parsing). Page 1 only (up to 100 documents); per-section hit totals (Projects, Items, Assets, …) go in the note. First call signs the UI in silently if needed. Returns document_number + version (chains into `edms_get_document`), code, title, status, authors, last-modified, context, keywords, snippet, and files (chains into `edms_download_file`). The search index is global metadata, so results can list documents you cannot open — those rows carry the UI's own access-denied marker and are flagged `accessible=false` for free; rows without the marker (`accessible=null`) are openable in practice. `check_access=true` REST-probes the unmarked ones into true/false (~+10 s/page); `access='accessible'|'restricted'` filters (implies the probe; code-only rows without numeric ids drop out).
 - `edms_search_documents` — list documents attached to a structure parent: `parent_object_type` + `parent_object_id` (e.g. type `A` with an asset id for an equipment item's documents), narrowed by `status`, `type` (see `edms_list_document_types`), `context`, `release_procedure`, `attributes`, `obsolete`. Upstream caveat: without a parent scope the endpoint returns EMPTY for ordinary accounts (verified live) — it is a scoped structure listing, not a global filter search. The listing can include documents your account cannot open (detail then reports "not found or not visible"). Returns edms_id + version (follow up with `edms_get_document`), title, dates, ext_ref, context, type, status, obsolescence, URL; offset/limit paginate client-side.
 - `edms_get_document` — full metadata of one document by numeric EDMS number and optional `version` ('1', '1.2' or 'LAST_RELEASED'; omitted = latest version): title, authors, dates, context, type, release procedure, status, visibility, keywords, canonical URL, files list (names feed `edms_download_file`).
-- `edms_download_file` — bounded download of one file by document number + exact filename from the files list + optional version (default `LAST_RELEASED`) into CMcpS storage.
+- `edms_download_file` — bounded download of one file by document number + exact filename from the files list + optional version (default `LAST_RELEASED`) into cmsmcp storage.
 - `edms_list_document_types` — document types (typeId/typeName/typeDesc) usable as the `type` search filter; `context_id` is required upstream (e.g. `ORG-003107`), optional `cadim_type` category (TEXTFILE, DRAWING, LAYOUT, SCHEMATIC, 3D_MODEL).
 - `edms_get_current_user` — the SSO caller's EDMS identity (uic, username, email, display name).
 
@@ -362,7 +375,7 @@ CMS HyperNews was **discontinued at the end of 2022 in favor of CMS Talk** (Disc
 - `hypernews_get_forum` — top-level threads of one forum: message number, title, author, date, reply count.
 - `hypernews_get_message` — one message by forum + slash-separated path (e.g. `788/2`): title, date, author name/username, plain-text body (both marker-wrapped plain-text bodies and bare-HTML bodies), direct replies, attachment URLs, next-in-thread/next-in-forum flags.
 - `hypernews_get_member` — member profile by exact case-sensitive username (the viewer route reads the first query-string *key* as the username): display name, email, homepage, status, and all remaining profile fields.
-- `hypernews_download_file` — bounded download of a `/HyperNews/CMS/get/AUX/…` attachment into CMcpS storage; archived bodies use both site-relative and absolute, lowercase and uppercase `HREF` forms — all are normalized.
+- `hypernews_download_file` — bounded download of a `/HyperNews/CMS/get/AUX/…` attachment into cmsmcp storage; archived bodies use both site-relative and absolute, lowercase and uppercase `HREF` forms — all are normalized.
 
 ## CERN Admin e-guide tools (admin-eguide.web.cern.ch)
 
@@ -384,7 +397,7 @@ Generic MkDocs (Material) reader: the site search index drives search/listing, p
 
 ## Local PDF figure tools (PyMuPDF, no network)
 
-Local post-processing for PDFs fetched with the `*_download_*` tools (or any local PDF): geometry probing to derive a crop box, vector-preserving cropping, and raster rendering for visual verification. No network I/O; outputs stay inside CMcpS download storage under the usual size caps. Pages are numbered from 1 (pdftotext convention).
+Local post-processing for PDFs fetched with the `*_download_*` tools (or any local PDF): geometry probing to derive a crop box, vector-preserving cropping, and raster rendering for visual verification. No network I/O; outputs stay inside cmsmcp download storage under the usual size caps. Pages are numbered from 1 (pdftotext convention).
 
 - `pdf_probe_page` — text blocks, embedded-image boxes, and union bounds of vector drawings for one page, plus combined `clip_hints`. Check `drawings_union` before cropping: dashed frames/plot axes can extend below the last text block.
 - `pdf_crop_figure` — crops one page region into a new single-page PDF via `show_pdf_page`, so drawings stay vector and text stays selectable (no rasterization). Optional plain `output_name`.
@@ -394,9 +407,9 @@ Local post-processing for PDFs fetched with the `*_download_*` tools (or any loc
 
 Searchable local inventory of CERN hosted websites. The primary source is the Web Services portal inventory (`GET /api/search/hostnames`), which enumerates every centrally hosted site (webeos, paas, appCatalogue, drupal, wsdb) with owner, category, display type, description and creation timestamp; it is merged with `*.cern.ch` hostnames from the public crt.sh certificate-transparency logs, which additionally cover self-managed hosts with publicly trusted certificates (no metadata for those rows — `source` field is `wsp` or `ctlog`). LANDB and the portal expose no global device/DNS export to regular accounts, which is why the website inventory comes from these two sources.
 
-The merged inventory (~14.5k sites, ~4 MB) is cached as a SQLite database (`websites-inventory.db`) under the CMcpS state directory, rebuilt atomically on each refresh. `websites_search` and `websites_lookup` auto-refresh when the cache is absent or older than `CMCPS_WEBSITES_CACHE_MAX_AGE_DAYS` (default 30); a refresh failure with an existing cache serves stale results with a `stale_served` note. Search is FTS5 prefix-matching ranked across hostname, project name, description and owner (tokens ANDed), with a substring fallback when SQLite was built without FTS5.
+The merged inventory (~14.5k sites, ~4 MB) is cached as a SQLite database (`websites-inventory.db`) under the cmsmcp state directory, rebuilt atomically on each refresh. `websites_search` and `websites_lookup` auto-refresh when the cache is absent or older than `CMSMCP_WEBSITES_CACHE_MAX_AGE_DAYS` (default 30); a refresh failure with an existing cache serves stale results with a `stale_served` note. Search is FTS5 prefix-matching ranked across hostname, project name, description and owner (tokens ANDed), with a substring fallback when SQLite was built without FTS5.
 
-Credential model: the portal API wants a Bearer token, but its SPA obtains it via a backend `/authenticate` route — no Keycloak token exchange is visible in the browser, so the `BEARER_SERVICES` interception cannot capture it. Instead each refresh mints the token on demand: a headless browser visit to the portal login page driven by the stored SSO session reads `window.localStorage["token"]` (`AuthService.extract_local_storage`, analogous to `render_page`). The token is held in memory only, never persisted. Manual fallback: `CMCPS_WEBSITES_TOKEN`. Requires a working `cern_auth_sign_in` session for the headless mint. crt.sh is queried anonymously (it is in `CMCPS_ALLOWED_HOSTS` by default; it receives no credentials).
+Credential model: the portal API wants a Bearer token, but its SPA obtains it via a backend `/authenticate` route — no Keycloak token exchange is visible in the browser, so the `BEARER_SERVICES` interception cannot capture it. Instead each refresh mints the token on demand: a headless browser visit to the portal login page driven by the stored SSO session reads `window.localStorage["token"]` (`AuthService.extract_local_storage`, analogous to `render_page`). The token is held in memory only, never persisted. Manual fallback: `CMSMCP_WEBSITES_TOKEN`. Requires a working `cern_auth_sign_in` session for the headless mint. crt.sh is queried anonymously (it is in `CMSMCP_ALLOWED_HOSTS` by default; it receives no credentials).
 
 - `websites_search` — ranked full-text search with structured filters (`environment`, `category`, `display_type`, `owner` — all exact, lowercase-insensitive) and `limit`/`offset` paging; empty query lists filtered rows.
 - `websites_lookup` — exact record(s) for one hostname (`indico.cern.ch`).
@@ -424,43 +437,43 @@ Data-certification queries against the Run Registry (RR): which runs are signifi
 
 ## CERN Phonebook tools (directory.web.cern.ch → phonebook.cern.ch)
 
-directory.web.cern.ch is a Drupal portal whose search tabs delegate to CDS, Indico, the Service Portal, and the CERN Map (each covered by its own adapter); its unique surface is the **CERN Phonebook** of people and services, a React SPA at phonebook.cern.ch with a private JSON API (`GET /api/search`, `GET /api/search/lastUpdate`). Auth: the API rejects anonymous calls (`401 Bearer`); the SPA's own Keycloak public client `phonebook` token is minted headlessly from the stored SSO session on first use and refreshed silently afterwards (like hltinfo; `cern-service-tokens.json`, 0600). Manual fallback: `CMCPS_PHONEBOOK_TOKEN`. The `tls_client_certificate_bound_access_tokens` flag in the protected-resource metadata is **not** enforced for plain Bearer HTTPS calls (verified live).
+directory.web.cern.ch is a Drupal portal whose search tabs delegate to CDS, Indico, the Service Portal, and the CERN Map (each covered by its own adapter); its unique surface is the **CERN Phonebook** of people and services, a React SPA at phonebook.cern.ch with a private JSON API (`GET /api/search`, `GET /api/search/lastUpdate`). Auth: the API rejects anonymous calls (`401 Bearer`); the SPA's own Keycloak public client `phonebook` token is minted headlessly from the stored SSO session on first use and refreshed silently afterwards (like hltinfo; `cern-service-tokens.json`, 0600). Manual fallback: `CMSMCP_PHONEBOOK_TOKEN`. The `tls_client_certificate_bound_access_tokens` flag in the protected-resource metadata is **not** enforced for plain Bearer HTTPS calls (verified live).
 
 - `phonebook_search` — full-text search over CERN people and services: name, first/last name, email, organic unit, office location, landlines (`phone1`/`phone2`), `mobilePhone`, postbox, preferred language per hit; `type` is `PERSON` or `SERVICE`. Fixed 10 hits per page, 1-based `page`; `total_count` and `has_more` come from the backend page.
 - `phonebook_last_update` — last-update timestamp of the directory database (result freshness).
 
 ## Configuration
 
-Configuration uses environment variables with the `CMCPS_` prefix. Common settings:
+Configuration uses environment variables with the `CMSMCP_` prefix. Common settings:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CMCPS_STATE_DIR` | `~/.local/state/cmcps` | Local state directory |
-| `CMCPS_SSO_START_URL` | `https://indico.cern.ch/user/dashboard/` | Protected page that initiates CERN SSO in the browser |
-| `CMCPS_SSO_IDENTITY_HOST` | `auth.cern.ch` | Host whose identity cookie proves login completed |
-| `CMCPS_BROWSER_EXECUTABLE` | auto-detected Chromium/Chrome | Browser binary used by Playwright |
-| `CMCPS_SSO_TIMEOUT_SECONDS` | `180` | Maximum browser sign-in wait (30–900) |
-| `CMCPS_SESSION_MAX_AGE_SECONDS` | `86400` | Maximum local age accepted for browser-session identity cookies |
-| `CMCPS_IDENTITY_COOKIE_NAMES` | `["KEYCLOAK_IDENTITY"]` | Cookie names accepted as proof of login |
-| `CMCPS_ALLOWED_HOSTS` | CERN hosts and INSPIRE-HEP | Request allowlist |
-| `CMCPS_REQUEST_TIMEOUT_SECONDS` | `30` | Upstream request timeout |
-| `CMCPS_MAX_RESPONSE_BYTES` | `10485760` | Maximum in-memory response size |
-| `CMCPS_MAX_DOWNLOAD_BYTES` | `52428800` | Maximum returned/downloaded file size |
-| `CMCPS_REQUIRE_SSO` | `true` | Enforce authentication before protected tools |
-| `CMCPS_INDICO_BASE_URL` | `https://indico.cern.ch` | Indico instance used by the Indico tools |
-| `CMCPS_INDICO_API_TOKEN` | unset | Indico personal API token (`indp_...`); required for protected events/categories |
-| `CMCPS_INSPIRE_BASE_URL` | `https://inspirehep.net/api` | INSPIRE-HEP API root |
-| `CMCPS_GITLAB_BASE_URL` | `https://gitlab.cern.ch` | CERN GitLab instance |
-| `CMCPS_GITLAB_TOKEN` | unset | Optional GitLab personal access token (`read_api` scope) |
-| `CMCPS_CDS_BASE_URL` | `https://cds.cern.ch` | CDS instance |
-| `CMCPS_WEBSITES_TOKEN` | unset | Optional Web Services portal Bearer token (normally minted headlessly from SSO) |
-| `CMCPS_WEBSITES_CACHE_MAX_AGE_DAYS` | `30` | Inventory cache age after which searches auto-refresh |
-| `CMCPS_MATTERMOST_BASE_URL` | `https://mattermost.web.cern.ch` | CERN Mattermost instance |
-| `CMCPS_MATTERMOST_TOKEN` | unset | Optional Mattermost personal access token (normally the SSO-minted `MMAUTHTOKEN` cookie is used) |
+| `CMSMCP_STATE_DIR` | `~/.local/state/cmsmcp` | Local state directory |
+| `CMSMCP_SSO_START_URL` | `https://indico.cern.ch/user/dashboard/` | Protected page that initiates CERN SSO in the browser |
+| `CMSMCP_SSO_IDENTITY_HOST` | `auth.cern.ch` | Host whose identity cookie proves login completed |
+| `CMSMCP_BROWSER_EXECUTABLE` | auto-detected Chromium/Chrome | Browser binary used by Playwright |
+| `CMSMCP_SSO_TIMEOUT_SECONDS` | `180` | Maximum browser sign-in wait (30–900) |
+| `CMSMCP_SESSION_MAX_AGE_SECONDS` | `86400` | Maximum local age accepted for browser-session identity cookies |
+| `CMSMCP_IDENTITY_COOKIE_NAMES` | `["KEYCLOAK_IDENTITY"]` | Cookie names accepted as proof of login |
+| `CMSMCP_ALLOWED_HOSTS` | CERN hosts and INSPIRE-HEP | Request allowlist |
+| `CMSMCP_REQUEST_TIMEOUT_SECONDS` | `30` | Upstream request timeout |
+| `CMSMCP_MAX_RESPONSE_BYTES` | `10485760` | Maximum in-memory response size |
+| `CMSMCP_MAX_DOWNLOAD_BYTES` | `52428800` | Maximum returned/downloaded file size |
+| `CMSMCP_REQUIRE_SSO` | `true` | Enforce authentication before protected tools |
+| `CMSMCP_INDICO_BASE_URL` | `https://indico.cern.ch` | Indico instance used by the Indico tools |
+| `CMSMCP_INDICO_API_TOKEN` | unset | Indico personal API token (`indp_...`); required for protected events/categories |
+| `CMSMCP_INSPIRE_BASE_URL` | `https://inspirehep.net/api` | INSPIRE-HEP API root |
+| `CMSMCP_GITLAB_BASE_URL` | `https://gitlab.cern.ch` | CERN GitLab instance |
+| `CMSMCP_GITLAB_TOKEN` | unset | Optional GitLab personal access token (`read_api` scope) |
+| `CMSMCP_CDS_BASE_URL` | `https://cds.cern.ch` | CDS instance |
+| `CMSMCP_WEBSITES_TOKEN` | unset | Optional Web Services portal Bearer token (normally minted headlessly from SSO) |
+| `CMSMCP_WEBSITES_CACHE_MAX_AGE_DAYS` | `30` | Inventory cache age after which searches auto-refresh |
+| `CMSMCP_MATTERMOST_BASE_URL` | `https://mattermost.web.cern.ch` | CERN Mattermost instance |
+| `CMSMCP_MATTERMOST_TOKEN` | unset | Optional Mattermost personal access token (normally the SSO-minted `MMAUTHTOKEN` cookie is used) |
 
 Service tokens come only from these namespaced environment variables and are injected by the trusted HTTP layer; they are never accepted as tool arguments, mixed into unrelated origins, or written to logs.
 
-`CMCPS_REQUIRE_SSO=false` exists only for offline/public-endpoint development and must not be used as a substitute for the intended CERN flow. Configuration is read from the process environment only; CMcpS does not implicitly trust a `.env` file from an MCP client's launch directory.
+`CMSMCP_REQUIRE_SSO=false` exists only for offline/public-endpoint development and must not be used as a substitute for the intended CERN flow. Configuration is read from the process environment only; cmsmcp does not implicitly trust a `.env` file from an MCP client's launch directory.
 
 The session store and its state directory are written with owner-only permissions. It contains browser cookies and should be treated as a credential file. Logs and tool outputs expose only metadata and redacted URLs, never cookie or authorization values.
 
@@ -472,7 +485,7 @@ The session store and its state directory are written with owner-only permission
 - Authenticated cookies are injected only after RFC 6265 host-only/domain and path-boundary checks.
 - Saved browser state is minimized to allowlisted cookies; localStorage origins are never persisted.
 - Redirects are bounded and checked again before following.
-- Response and download sizes are bounded; downloads stay inside CMcpS state storage. Download name collisions are resolved by content (SHA-256): identical payloads reuse the existing file, distinct payloads get a `name-1.ext`-style unique suffix — nothing is silently overwritten.
+- Response and download sizes are bounded; downloads stay inside cmsmcp state storage. Download name collisions are resolved by content (SHA-256): identical payloads reuse the existing file, distinct payloads get a `name-1.ext`-style unique suffix — nothing is silently overwritten.
 - Secrets, absolute credential paths, and session payloads are excluded from logs, errors, and tool results.
 
 ## Tests

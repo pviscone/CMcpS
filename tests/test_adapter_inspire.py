@@ -9,11 +9,11 @@ from typing import Any
 import httpx
 import pytest
 
-from cmcps.adapters import inspire
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import inspire
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 

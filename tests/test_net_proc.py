@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from cmcps.contracts.errors import UpstreamError
-from cmcps.net.proc import run_command
+from cmsmcp.contracts.errors import UpstreamError
+from cmsmcp.net.proc import run_command
 
 PY = sys.executable
 
@@ -27,7 +27,7 @@ async def test_nonzero_exit_and_stderr_passthrough() -> None:
 
 async def test_missing_executable_maps_upstream() -> None:
     with pytest.raises(UpstreamError, match="executable not found"):
-        await run_command(["/nonexistent/cmcps-missing-binary-xyz"])
+        await run_command(["/nonexistent/cmsmcp-missing-binary-xyz"])
 
 
 async def test_timeout_kills_process() -> None:

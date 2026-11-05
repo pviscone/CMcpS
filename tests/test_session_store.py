@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from cmcps.auth.store import SessionRecord, SessionStore, minimize_storage_state
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import SessionStoreError
+from cmsmcp.auth.store import SessionRecord, SessionStore, minimize_storage_state
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import SessionStoreError
 
 
 def _identity_arguments(settings: Settings) -> dict[str, Any]:

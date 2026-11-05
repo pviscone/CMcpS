@@ -6,9 +6,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from cmcps.auth import browser as browser_module
-from cmcps.auth.browser import capture_bearer_service
-from cmcps.config.settings import Settings
+from cmsmcp.auth import browser as browser_module
+from cmsmcp.auth.browser import capture_bearer_service
+from cmsmcp.config.settings import Settings
 
 _TOKEN_ENDPOINT = "https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token"
 _POST_DATA = "code=deadbeef&client_id=cmshltinfo-app&grant_type=authorization_code"

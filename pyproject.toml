@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cmcps"
+name = "cmsmcp"
 version = "0.2.0"
 description = "Read-only CERN/CMS MCP server with browser-backed SSO authentication"
 readme = "README.md"
@@ -18,8 +18,12 @@ dependencies = [
   "pymupdf>=1.26,<2",
 ]
 
+[project.optional-dependencies]
+# `cmsmcp login` (Kerberos + terminal 2FA); building gssapi needs libkrb5-dev.
+kerberos = ["gssapi>=1.8"]
+
 [project.scripts]
-cmcps = "cmcps.app:main"
+cmsmcp = "cmsmcp.app:main"
 
 [dependency-groups]
 dev = [
@@ -30,7 +34,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cmcps"]
+packages = ["src/cmsmcp"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

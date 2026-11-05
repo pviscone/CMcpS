@@ -8,12 +8,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cmcps.adapters import glance
-from cmcps.auth.service import AuthService
-from cmcps.auth.tokens import ServiceTokenRecord, ServiceTokenStore
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import glance
+from cmsmcp.auth.service import AuthService
+from cmsmcp.auth.tokens import ServiceTokenRecord, ServiceTokenStore
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -223,7 +223,7 @@ async def test_missing_alcm_token_rejected_without_request(tmp_path: Path) -> No
     settings, client = make_client(tmp_path, recorder, alcm_token=None, mem_token=None)
     with pytest.raises(InvalidInputError) as excinfo:
         await glance.alcm_user(client, settings)
-    assert "CMCPS_GLANCE_ALCM_TOKEN" in (excinfo.value.instructions or "")
+    assert "CMSMCP_GLANCE_ALCM_TOKEN" in (excinfo.value.instructions or "")
     assert "cms-alcm-api-prod" in (excinfo.value.instructions or "")
     assert recorder.requests == []
 

@@ -10,19 +10,19 @@ from pathlib import Path
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from cmcps.app import build_server
-from cmcps.config.settings import Settings
+from cmsmcp.app import build_server
+from cmsmcp.config.settings import Settings
 
 
 async def test_stdio_server_lists_tools_and_enforces_auth(tmp_path: Path) -> None:
     env = dict(
         os.environ,
-        CMCPS_STATE_DIR=str(tmp_path),
-        CMCPS_REQUIRE_SSO="true",
+        CMSMCP_STATE_DIR=str(tmp_path),
+        CMSMCP_REQUIRE_SSO="true",
     )
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "cmcps"],
+        args=["-m", "cmsmcp"],
         env=env,
         cwd=Path.cwd(),
     )

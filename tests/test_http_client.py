@@ -9,11 +9,11 @@ from typing import Any
 import httpx
 import pytest
 
-from cmcps.auth.service import AuthService
-from cmcps.auth.store import SessionStore
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import PolicyViolationError, RequestTooLargeError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.auth.service import AuthService
+from cmsmcp.auth.store import SessionStore
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import PolicyViolationError, RequestTooLargeError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 
 def _client_with_transport(
@@ -108,6 +108,31 @@ async def test_allowlisted_redirect_is_followed(settings: Settings) -> None:
     )
     assert response.content == b"done"
     assert [request.url.path for request in requests] == ["/start", "/done"]
+
+
+@pytest.mark.parametrize(
+    ("exc", "retryable"),
+    [
+        (httpx.ReadTimeout("slow"), True),
+        (httpx.ConnectError("refused"), True),
+        (httpx.DecodingError("bad gzip"), False),
+    ],
+)
+async def test_transport_failure_is_upstream_error_not_policy(
+    settings: Settings, exc: httpx.HTTPError, retryable: bool
+) -> None:
+    """A network failure after the policy checks passed is UPSTREAM_ERROR."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise exc
+
+    settings = settings.model_copy(update={"require_sso": False})
+    client, _ = _client_with_transport(handler, settings)
+    with pytest.raises(UpstreamError) as caught:
+        await client.request("GET", "https://service.cern.ch/slow?token=secret")
+    assert type(exc).__name__ in caught.value.message
+    assert "secret" not in caught.value.message
+    assert caught.value.retryable is retryable
 
 
 async def test_response_size_limit_is_enforced(tmp_path: Path) -> None:
