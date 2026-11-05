@@ -1,5 +1,4 @@
 """Kerberos + terminal-2FA login: token scoping, completion checks, CLI behavior."""
-# ruff: noqa: S105 - fixture token placeholders, not real secrets
 
 from __future__ import annotations
 

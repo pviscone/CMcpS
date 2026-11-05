@@ -13,7 +13,9 @@ from cmsmcp.config.settings import Settings
 
 
 @pytest.fixture(autouse=True)
-def _hermetic_cmsmcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _hermetic_cmsmcp_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     """Tests must not depend on the operator's cmsmcp environment.
 
     ``Settings`` binds any field not passed explicitly to ``CMSMCP_*`` env
@@ -24,6 +26,10 @@ def _hermetic_cmsmcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in list(os.environ):
         if key.startswith("CMSMCP_"):
             monkeypatch.delenv(key, raising=False)
+    # Never read the developer's real secret files, and keep results
+    # machine-parseable (compact JSON) for assertions.
+    monkeypatch.setenv("CMSMCP_CONFIG_DIR", str(tmp_path_factory.mktemp("cmsmcp-config")))
+    monkeypatch.setenv("CMSMCP_OUTPUT_FORMAT", "json")
 
 
 @pytest.fixture

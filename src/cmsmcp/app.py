@@ -34,6 +34,8 @@ from cmsmcp.contracts.results import (
 )
 from cmsmcp.net.client import SafeHttpClient
 from cmsmcp.net.safety import validate_url
+from cmsmcp.policy import Policy
+from cmsmcp.registry import CmsMcpServer
 from cmsmcp.tools import register_adapter_tools
 
 
@@ -123,7 +125,10 @@ def build_server(  # noqa: C901 - per-tool registration blocks dominate the bran
     """Build the M1 server and register auth-gated tools."""
     runtime_settings = settings or get_settings()
     runtime_auth = auth_service or AuthService(runtime_settings)
-    server: MCPServer = MCPServer(
+    policy = Policy(runtime_settings)
+    server = CmsMcpServer(
+        settings=runtime_settings,
+        policy=policy,
         name=runtime_settings.server_name,
         title="cmsmcp",
         description="Read-only CERN/CMS MCP server.",
@@ -319,7 +324,7 @@ def build_server(  # noqa: C901 - per-tool registration blocks dominate the bran
         """Download one CERN-hosted file through the SSO session."""
         return await _cern_download_file_payload(http, url=url, filename=filename)
 
-    register_adapter_tools(server, runtime_settings, runtime_auth, http)
+    register_adapter_tools(server, runtime_settings, runtime_auth, http, policy)
 
     return server
 

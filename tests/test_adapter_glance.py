@@ -17,8 +17,8 @@ from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-ALCM_TOKEN = "unit-test-alcm-token"  # noqa: S105 - mock credential, not a real secret
-MEM_TOKEN = "unit-test-mem-token"  # noqa: S105 - mock credential, not a real secret
+ALCM_TOKEN = "unit-test-alcm-token"
+MEM_TOKEN = "unit-test-mem-token"
 
 ANALYSIS_PAYLOAD = {
     "analysis": [
@@ -241,9 +241,9 @@ async def test_401_maps_to_helpful_upstream(tmp_path: Path) -> None:
 async def test_captured_bearer_wins_over_env_token(tmp_path: Path) -> None:
     record = ServiceTokenRecord(
         service="glance_alcm",
-        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",  # noqa: S106
+        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",
         client_id="cms-alcm-client-prod",
-        access_token="captured-alcm-value",  # noqa: S106
+        access_token="captured-alcm-value",
         refresh_token=None,
         access_expires_at=None,
     )
@@ -262,9 +262,9 @@ async def test_captured_bearer_wins_over_env_token(tmp_path: Path) -> None:
 async def test_captured_membership_bearer_wins_over_env_token(tmp_path: Path) -> None:
     record = ServiceTokenRecord(
         service="glance_membership",
-        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",  # noqa: S106
+        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",
         client_id="cms-membership-client-prod",
-        access_token="captured-mem-value",  # noqa: S106
+        access_token="captured-mem-value",
         refresh_token=None,
         access_expires_at=None,
     )

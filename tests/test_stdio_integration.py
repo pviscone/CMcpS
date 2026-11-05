@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from cmsmcp.app import build_server
 from cmsmcp.config.settings import Settings
+
+
+def envelope(result: Any) -> dict[str, Any]:
+    """Parse the compact-JSON tool result text (tests run with output_format=json)."""
+    return json.loads(result.content[0].text)
 
 
 async def test_stdio_server_lists_tools_and_enforces_auth(tmp_path: Path) -> None:
@@ -37,5 +44,5 @@ async def test_stdio_server_lists_tools_and_enforces_auth(tmp_path: Path) -> Non
 
     expected = {tool.name for tool in await build_server(Settings()).list_tools()}
     assert {tool.name for tool in tools.tools} == expected
-    assert status.structured_content["data"]["authenticated"] is False
-    assert health.structured_content["error"]["code"] == "AUTH_REQUIRED"
+    assert envelope(status)["data"]["authenticated"] is False
+    assert envelope(health)["error"]["code"] == "AUTH_REQUIRED"

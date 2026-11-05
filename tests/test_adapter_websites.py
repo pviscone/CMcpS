@@ -19,7 +19,7 @@ from cmsmcp.config.settings import Settings
 from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
 from cmsmcp.net.client import SafeHttpClient
 
-TEST_TOKEN = "unit-test-token"  # noqa: S105 - mock credential, not a real secret
+TEST_TOKEN = "unit-test-token"
 
 WSP_PAYLOAD = [
     {

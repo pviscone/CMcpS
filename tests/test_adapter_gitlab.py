@@ -369,7 +369,7 @@ async def test_private_token_header_only_when_configured(tmp_path: Path) -> None
     settings, client = make_client(
         tmp_path,
         Recorder(lambda r: _record_and_respond(with_token, r)),
-        token="glpat-test",  # noqa: S106
+        token="glpat-test",
     )
     await gitlab.search_projects(client, settings)
 

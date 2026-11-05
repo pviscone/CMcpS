@@ -270,7 +270,7 @@ async def test_get_event_empty_without_token_suggests_indico_token(tmp_path: Pat
 
 async def test_get_event_unknown_with_token_reports_plain_not_found(tmp_path: Path) -> None:
     recorder = Recorder(lambda _: httpx.Response(200, json={"count": 0, "results": []}))
-    settings, client = make_client(tmp_path, recorder, token="indp_test")  # noqa: S106
+    settings, client = make_client(tmp_path, recorder, token="indp_test")
     with pytest.raises(InvalidInputError) as caught:
         await indico.get_event(client, settings, event_id="999999")
     assert caught.value.message == "Indico event '999999' was not found"
@@ -287,7 +287,7 @@ async def test_search_events_empty_without_token_notes_protection(tmp_path: Path
 
 async def test_search_events_empty_with_token_has_plain_note(tmp_path: Path) -> None:
     recorder = Recorder(lambda _: httpx.Response(200, json={"count": 0, "results": []}))
-    settings, client = make_client(tmp_path, recorder, token="indp_test")  # noqa: S106
+    settings, client = make_client(tmp_path, recorder, token="indp_test")
     result = await indico.search_events(client, settings, category_id="2091")
     assert result.note == "category_id=2091"
 
@@ -412,7 +412,7 @@ async def test_download_file_streams_with_bearer_token(tmp_path: Path) -> None:
         return httpx.Response(200, content=b"%PDF-1.7 bytes")
 
     recorder = Recorder(handler)
-    settings, client = make_client(tmp_path, recorder, token="indp_test")  # noqa: S106
+    settings, client = make_client(tmp_path, recorder, token="indp_test")
     result = await indico.download_file(
         client,
         settings,

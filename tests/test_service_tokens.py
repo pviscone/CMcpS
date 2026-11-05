@@ -1,5 +1,4 @@
 """Keycloak Bearer-token capture, store, and refresh tests."""
-# ruff: noqa: S105, S106 - fixture credential placeholders, not real secrets
 
 from __future__ import annotations
 

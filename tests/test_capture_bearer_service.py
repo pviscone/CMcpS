@@ -1,5 +1,4 @@
 """Tests for the lazy single-service headless Bearer capture."""
-# ruff: noqa: S105 - fixture endpoint/token placeholders, not real secrets
 
 from __future__ import annotations
 

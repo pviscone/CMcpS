@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, HttpUrl, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 DEFAULT_IDENTITY_COOKIES = ("KEYCLOAK_IDENTITY",)
 DEFAULT_ALLOWED_HOSTS = (
@@ -27,6 +29,63 @@ DEFAULT_SSO_START_URL = "https://indico.cern.ch/user/dashboard/"
 DEFAULT_SSO_IDENTITY_HOST = "auth.cern.ch"
 MIN_SSO_TIMEOUT_SECONDS = 30
 MAX_SSO_TIMEOUT_SECONDS = 900
+
+
+def default_config_dir() -> Path:
+    """``$CMSMCP_CONFIG_DIR`` or ``$XDG_CONFIG_HOME/cmsmcp`` (``~/.config/cmsmcp``)."""
+    explicit = os.environ.get("CMSMCP_CONFIG_DIR")
+    if explicit:
+        return Path(explicit).expanduser()
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    return (Path(xdg) if xdg else Path.home() / ".config") / "cmsmcp"
+
+
+# Settings fields that hold credentials. ``cmsmcp setup`` writes each one to
+# ``<config_dir>/secrets/<field>`` (mode 0600); the environment still wins.
+SECRET_FIELDS = (
+    "indico_api_token",
+    "gitlab_token",
+    "github_token",
+    "jira_token",
+    "mattermost_token",
+    "hltinfo_token",
+    "glance_alcm_token",
+    "glance_membership_token",
+    "phonebook_token",
+    "websites_token",
+)
+
+
+def secrets_dir() -> Path:
+    return default_config_dir() / "secrets"
+
+
+class SecretFilesSource(PydanticBaseSettingsSource):
+    """Read credential fields from private files written by ``cmsmcp setup``.
+
+    Files readable by group/other are ignored (and reported by ``cmsmcp doctor``)
+    rather than trusted.
+    """
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:  # noqa: ARG002
+        if field_name not in SECRET_FIELDS:
+            return None, field_name, False
+        path = secrets_dir() / field_name
+        try:
+            if path.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                return None, field_name, False
+            value = path.read_text().strip()
+        except OSError:
+            return None, field_name, False
+        return (value or None), field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        for name, info in self.settings_cls.model_fields.items():
+            value, key, _ = self.get_field_value(info, name)
+            if value is not None:
+                values[key] = value
+        return values
 
 
 def _default_state_dir() -> Path:
@@ -60,7 +119,65 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            SecretFilesSource(settings_cls),
+            file_secret_settings,
+        )
+
     state_dir: Path = Field(default_factory=_default_state_dir)
+    config_dir: Path = Field(default_factory=default_config_dir)
+
+    # --- Token efficiency -------------------------------------------------
+    # text: compact line-oriented results (default); json: one compact JSON line.
+    output_format: Literal["text", "json"] = "text"
+    # Per-result character budget; longer results are cut at a line boundary
+    # with a note telling the agent how to narrow the request.
+    max_result_chars: int = Field(default=16_000, ge=2_000, le=1_000_000)
+    # Tool groups to expose ("all", profile names, or group prefixes such as
+    # "indico,gitlab"); see cmsmcp.registry.PROFILES. Core tools are always on.
+    profiles: tuple[str, ...] = ("all",)
+    # direct: every tool listed to the client. lazy: only cern_search plus
+    # cmsmcp_find_tools / cmsmcp_describe_tool / cmsmcp_call (for clients that
+    # load every tool schema up front).
+    tool_mode: Literal["direct", "lazy"] = "direct"
+
+    # --- Policy -----------------------------------------------------------
+    # Personal content sources the user opted into, e.g. ["mattermost_dm"].
+    personal_sources: tuple[str, ...] = ()
+    # Write/act tools are only registered when this is true.
+    actions_enabled: bool = False
+    # elicit: confirm through the MCP client (falls back to approve when the
+    # client cannot elicit); approve: always out-of-band `cmsmcp approve`;
+    # deny: refuse every action.
+    confirm_mode: Literal["elicit", "approve", "deny"] = "elicit"
+    audit_enabled: bool = True
+
+    # --- lxplus / Kerberos -------------------------------------------------
+    lxplus_host: str = "lxplus.cern.ch"
+    lxplus_user: str | None = None
+    ssh_executable: str | None = Field(default_factory=lambda: shutil.which("ssh"))
+    ssh_timeout_seconds: float = Field(default=60.0, gt=0, le=900)
+
+    # --- Grid / Rucio --------------------------------------------------------
+    rucio_base_url: str = "https://cms-rucio.cern.ch"
+    rucio_auth_url: str = "https://cms-rucio-auth.cern.ch"
+    rucio_account: str | None = None
+
+    # --- Extra personal tokens (setup wizard) --------------------------------
+    github_token: str | None = None
+    jira_token: str | None = None
     sso_start_url: HttpUrl = HttpUrl(DEFAULT_SSO_START_URL)
     sso_identity_host: str = DEFAULT_SSO_IDENTITY_HOST
     sso_timeout_seconds: int = Field(
@@ -160,7 +277,14 @@ class Settings(BaseSettings):
         """Directory used by future download adapters."""
         return self.state_dir / "downloads"
 
-    @field_validator("identity_cookie_names", "allowed_hosts", "grid_cert_hosts", mode="before")
+    @field_validator(
+        "identity_cookie_names",
+        "allowed_hosts",
+        "grid_cert_hosts",
+        "profiles",
+        "personal_sources",
+        mode="before",
+    )
     @classmethod
     def _split_comma_tuple(cls, value: object) -> object:
         if isinstance(value, str) and not value.lstrip().startswith("["):

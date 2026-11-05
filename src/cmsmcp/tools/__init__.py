@@ -7,6 +7,7 @@ from mcp.server.mcpserver import MCPServer
 from cmsmcp.auth.service import AuthService
 from cmsmcp.config.settings import Settings
 from cmsmcp.net.client import SafeHttpClient
+from cmsmcp.policy import Policy
 from cmsmcp.tools.cds import register_cds_tools
 from cmsmcp.tools.cmsonline import register_cmsonline_tools
 from cmsmcp.tools.cmsresults import register_cmsresults_tools
@@ -44,8 +45,10 @@ def register_adapter_tools(
     settings: Settings,
     auth: AuthService,
     http: SafeHttpClient,
+    policy: Policy | None = None,
 ) -> None:
-    """Register every M2 adapter tool set behind the shared guard."""
+    """Register every adapter tool set behind the shared guard and policy."""
+    policy = policy or Policy(settings)
     register_indico_tools(server, settings, auth, http)
     register_inspire_tools(server, settings, auth, http)
     register_gitlab_tools(server, settings, auth, http)

@@ -18,7 +18,7 @@ from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-TEST_TOKEN = "unit-test-token"  # noqa: S105 - mock credential, not a real secret
+TEST_TOKEN = "unit-test-token"
 
 PATH_RESULT = {
     "result": {
@@ -257,9 +257,9 @@ async def test_run_lumis(tmp_path: Path) -> None:
 async def test_captured_bearer_wins_over_env_token(tmp_path: Path) -> None:
     captured_record = ServiceTokenRecord(
         service="hltinfo",
-        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",  # noqa: S106
+        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",
         client_id="cmshltinfo-frontend",
-        access_token="captured-access-value",  # noqa: S106
+        access_token="captured-access-value",
         refresh_token=None,
         access_expires_at=None,
     )

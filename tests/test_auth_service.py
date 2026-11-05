@@ -1,5 +1,4 @@
 """Authentication lifecycle and guard tests."""
-# ruff: noqa: S106 - fixture credential placeholders, not real secrets
 
 from __future__ import annotations
 

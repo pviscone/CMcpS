@@ -16,7 +16,7 @@ from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-TEST_TOKEN = "unit-test-token"  # noqa: S105 - mock credential, not a real secret
+TEST_TOKEN = "unit-test-token"
 
 PERSON = {
     "type": "PERSON",
