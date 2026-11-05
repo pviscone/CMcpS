@@ -57,7 +57,8 @@ _SESSION_WARM_URLS = (
 )
 _ANONYMOUS_NOTE = (
     "No live Jira session: results are limited to anonymous/public visibility. "
-    "Call cern_auth_sign_in (or cern_auth_reauthenticate) and retry for "
+    "Sign in again (cern_auth_sign_in / `cmsmcp login`) or add a Jira token "
+    "(`cmsmcp setup jira`) for "
     "restricted projects and issues."
 )
 
@@ -164,6 +165,7 @@ async def search_issues(
     jql: str,
     start_at: int = 0,
     max_results: int = 50,
+    warm: bool = True,
 ) -> SearchResult:
     """JQL search over CERN Jira issues."""
     if not jql.strip():
@@ -178,7 +180,10 @@ async def search_issues(
         )
     if start_at < 0:
         raise InvalidInputError("start_at must be >= 0")
-    authenticated = await _ensure_jira_session(client)
+    # warm=False (fan-out search): skip the /myself probe too, because any 401
+    # makes the shared client re-warm the session in a headless browser (~20 s).
+    # The search itself then runs with whatever session exists.
+    authenticated = await _ensure_jira_session(client) if warm else True
     response = await _get(
         client,
         f"{BASE}/search",

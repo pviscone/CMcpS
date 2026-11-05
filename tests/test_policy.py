@@ -126,3 +126,35 @@ def test_audit_log_is_private_and_clips_values(tmp_path: Path) -> None:
     record = json.loads(path.read_text().splitlines()[0])
     assert record["tool"] == "t" and record["status"] == "ok"
     assert len(record["args"]["q"]) < 260
+
+
+async def test_mattermost_dm_reads_need_personal_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cmsmcp.adapters import mattermost  # noqa: PLC0415
+    from cmsmcp.app import build_server  # noqa: PLC0415
+
+    async def channel_type(*_a: Any, **_k: Any) -> str:
+        return "D"
+
+    async def get_posts(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"source": "mattermost", "posts": [{"message": "private"}]}
+
+    monkeypatch.setattr(mattermost, "channel_type", channel_type)
+    monkeypatch.setattr(mattermost, "get_posts", get_posts)
+    args = {"channel_id": "a" * 26}
+
+    closed = build_server(Settings(state_dir=tmp_path, require_sso=False))
+    refused = json.loads((await closed.call_tool("mattermost_get_posts", args)).content[0].text)
+    assert refused["status"] == "error" and "personal" in refused["error"]["message"]
+    search = await closed.call_tool(
+        "mattermost_search_posts",
+        {"team_id": "t" * 26, "terms": "x", "include_direct_messages": True},
+    )
+    assert json.loads(search.content[0].text)["status"] == "error"
+
+    opened = build_server(
+        Settings(state_dir=tmp_path, require_sso=False, personal_sources=("mattermost_dm",))
+    )
+    allowed = json.loads((await opened.call_tool("mattermost_get_posts", args)).content[0].text)
+    assert allowed["status"] == "ok"

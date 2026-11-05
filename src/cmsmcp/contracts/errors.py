@@ -26,6 +26,18 @@ class CMSMCPError(Exception):
         )
 
 
+def setup_hint(step: str, what: str) -> str:
+    """Instruction for an optional credential that is not configured yet.
+
+    cmsmcp sets up only CERN SSO up front; everything else is offered on demand
+    through these hints so the agent can tell the user exactly what to run.
+    """
+    return (
+        f"{what} is an optional cmsmcp feature that is not set up. Ask the user to run "
+        f"`cmsmcp setup {step}` in a terminal (guided, about a minute), then retry."
+    )
+
+
 class AuthRequiredError(CMSMCPError):
     """A protected action attempted to run before CERN SSO completed."""
 
@@ -35,7 +47,8 @@ class AuthRequiredError(CMSMCPError):
         super().__init__(
             message,
             instructions=(
-                "Call cern_auth_sign_in and complete the browser login, then retry the tool."
+                "Call cern_auth_sign_in (opens a browser login), or ask the user to run "
+                "`cmsmcp login` (Kerberos + 2FA, no browser) in a terminal; then retry."
             ),
         )
 

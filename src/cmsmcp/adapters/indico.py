@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 
 from cmsmcp.adapters.common import json_body
 from cmsmcp.config.settings import Settings
-from cmsmcp.contracts.errors import InvalidInputError
+from cmsmcp.contracts.errors import InvalidInputError, setup_hint
 from cmsmcp.contracts.results import SearchResult
 from cmsmcp.net.client import SafeHttpClient
 
@@ -100,7 +100,7 @@ async def get_user_info(client: SafeHttpClient, settings: Settings) -> dict[str,
     if not settings.indico_api_token:
         raise InvalidInputError(
             "indico_get_user_info requires an Indico API token",
-            instructions="Set CMSMCP_INDICO_API_TOKEN with an Indico personal API token.",
+            instructions=setup_hint("indico", "An Indico API token"),
         )
     response = await client.request(
         "GET",
@@ -157,8 +157,8 @@ async def search_events(
     note = f"category_id={category_id}"
     if not events and not settings.indico_api_token:
         note += (
-            "; empty results may hide a protected category — set"
-            " CMSMCP_INDICO_API_TOKEN to see protected events"
+            "; empty results may hide a protected category — an Indico token"
+            " (`cmsmcp setup indico`) shows protected events"
         )
     return SearchResult(
         source=SOURCE,
@@ -283,10 +283,8 @@ async def _fetch_event(
         raise InvalidInputError(
             f"Indico event {event_id!r} was not found for the anonymous legacy"
             " export; it may exist but be protected",
-            instructions=(
-                "Set CMSMCP_INDICO_API_TOKEN with an Indico personal API token"
-                " and retry: the legacy export API only sees protected content"
-                " with a Bearer token."
+            instructions=setup_hint(
+                "indico", "Protected Indico content (needs an Indico API token)"
             ),
         )
     return events[0]

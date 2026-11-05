@@ -17,7 +17,12 @@ import httpx
 from cmsmcp.auth.browser import cookie_site_url_for_host
 from cmsmcp.auth.service import AuthService
 from cmsmcp.config.settings import Settings
-from cmsmcp.contracts.errors import PolicyViolationError, RequestTooLargeError, UpstreamError
+from cmsmcp.contracts.errors import (
+    PolicyViolationError,
+    RequestTooLargeError,
+    UpstreamError,
+    setup_hint,
+)
 from cmsmcp.net.safety import redact_url, validate_headers, validate_method, validate_url
 
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
@@ -122,11 +127,7 @@ class SafeHttpClient:
             if not cert.is_file() or not key.is_file():
                 raise PolicyViolationError(
                     f"Grid client certificate files are missing ({cert}, {key})",
-                    instructions=(
-                        "Point CMSMCP_GRID_CERT_FILE/CMSMCP_GRID_KEY_FILE at a valid "
-                        "grid credential (e.g. ~/.globus/usercert.pem/userkey.pem or a "
-                        "voms-proxy-init proxy)."
-                    ),
+                    instructions=setup_hint("grid", "Grid access (certificate or VOMS proxy)"),
                 )
             context = ssl.create_default_context()
             try:
@@ -135,9 +136,8 @@ class SafeHttpClient:
                 raise PolicyViolationError(
                     f"Grid client certificate could not be loaded ({cert}, {key})",
                     instructions=(
-                        "The key may be passphrase-protected: provide an unencrypted "
-                        "key or a voms-proxy-init proxy via "
-                        "CMSMCP_GRID_CERT_FILE/CMSMCP_GRID_KEY_FILE."
+                        "The key may be passphrase-protected; a VOMS proxy avoids that. "
+                        + setup_hint("grid", "A usable grid credential")
                     ),
                 ) from exc
             self._grid_client = httpx.AsyncClient(

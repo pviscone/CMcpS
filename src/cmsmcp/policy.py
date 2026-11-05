@@ -213,8 +213,9 @@ class Policy:
             raise PersonalSourceDisabledError(
                 f"{what} is personal content and is not enabled",
                 instructions=(
-                    f"Only if the user asked for it: they can opt in by adding '{source}' to "
-                    "CMSMCP_PERSONAL_SOURCES (or run `cmsmcp setup`) and restarting the server."
+                    "Only if the user asked for this: they can opt in with `cmsmcp setup "
+                    f"policy` (or add '{source}' to CMSMCP_PERSONAL_SOURCES), then restart "
+                    "the MCP server."
                 ),
             )
 
@@ -281,7 +282,9 @@ class Policy:
         if not self.settings.actions_enabled:
             raise ActionDeclinedError(
                 "actions are disabled",
-                instructions="The user can enable them with CMSMCP_ACTIONS_ENABLED=true.",
+                instructions=(
+                    "Actions are optional: the user can enable them with `cmsmcp setup policy`."
+                ),
             )
         mode = self.settings.confirm_mode
         if mode == "deny":

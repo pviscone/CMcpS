@@ -12,6 +12,7 @@ from cmsmcp.auth.service import AuthService
 from cmsmcp.config.settings import Settings
 from cmsmcp.contracts.results import ToolEnvelope
 from cmsmcp.net.client import SafeHttpClient
+from cmsmcp.policy import Policy
 from cmsmcp.tools.common import guarded
 
 _ID_DOC = (
@@ -24,13 +25,26 @@ _PER_PAGE = Annotated[int, Field(ge=1, le=200, description="Items per page (max 
 _PAGE = Annotated[int, Field(ge=1, description="1-based page number.")]
 
 
-def register_mattermost_tools(
+def register_mattermost_tools(  # noqa: C901 - one closure per tool
     server: MCPServer,
     settings: Settings,
     auth: AuthService,
     http: SafeHttpClient,
+    policy: Policy,
 ) -> None:
-    """Register the read-only Mattermost tools."""
+    """Register the read-only Mattermost tools.
+
+    Direct and group messages are personal content: reading them (search with
+    include_direct_messages, or opening a DM channel/thread) needs the user's
+    ``mattermost_dm`` opt-in (CMSMCP_PERSONAL_SOURCES / `cmsmcp setup policy`).
+    """
+    dm_label = "Mattermost direct/group messages"
+
+    async def _require_dm_access(channel_id: str | None) -> None:
+        if channel_id and mattermost.is_private_type(
+            await mattermost.channel_type(http, settings, channel_id)
+        ):
+            policy.require_personal("mattermost_dm", dm_label)
 
     @server.tool(
         name="mattermost_get_me",
@@ -125,16 +139,20 @@ def register_mattermost_tools(
         ] = None,
     ) -> ToolEnvelope:
         """Channel detail."""
-        return await guarded(
-            auth,
-            lambda: mattermost.get_channel(
+
+        async def run() -> dict:
+            channel = await mattermost.get_channel(
                 http,
                 settings,
                 channel_id=channel_id,
                 team_id=team_id,
                 channel_name=channel_name,
-            ),
-        )
+            )
+            if mattermost.is_private_type(channel.get("type")):
+                policy.require_personal("mattermost_dm", dm_label)
+            return channel
+
+        return await guarded(auth, run)
 
     @server.tool(
         name="mattermost_search_posts",
@@ -167,6 +185,8 @@ def register_mattermost_tools(
         ] = False,
     ) -> ToolEnvelope:
         """Post search within a team."""
+        if include_direct_messages:
+            policy.require_personal("mattermost_dm", dm_label)
         return await guarded(
             auth,
             lambda: mattermost.search_posts(
@@ -202,9 +222,10 @@ def register_mattermost_tools(
         after: Annotated[str | None, Field(description="Only posts after this post id.")] = None,
     ) -> ToolEnvelope:
         """Channel post history."""
-        return await guarded(
-            auth,
-            lambda: mattermost.get_posts(
+
+        async def run() -> dict:
+            await _require_dm_access(channel_id)
+            return await mattermost.get_posts(
                 http,
                 settings,
                 channel_id=channel_id,
@@ -212,8 +233,9 @@ def register_mattermost_tools(
                 per_page=per_page,
                 before=before,
                 after=after,
-            ),
-        )
+            )
+
+        return await guarded(auth, run)
 
     @server.tool(
         name="mattermost_get_thread",
@@ -225,7 +247,13 @@ def register_mattermost_tools(
     )
     async def mattermost_get_thread(post_id: str) -> ToolEnvelope:
         """Thread detail."""
-        return await guarded(auth, lambda: mattermost.get_thread(http, settings, post_id=post_id))
+
+        async def run() -> dict:
+            thread = await mattermost.get_thread(http, settings, post_id=post_id)
+            await _require_dm_access(thread.get("channel_id"))
+            return thread
+
+        return await guarded(auth, run)
 
     @server.tool(
         name="mattermost_download_file",

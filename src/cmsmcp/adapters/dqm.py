@@ -58,7 +58,7 @@ from typing import Any
 from urllib.parse import quote
 
 from cmsmcp.adapters.common import json_body
-from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError, setup_hint
 from cmsmcp.contracts.results import SearchResult
 from cmsmcp.net.client import SafeHttpClient
 
@@ -180,11 +180,7 @@ async def _get_json(
         raise UpstreamError(
             f"cmsweb rejected the grid client credential (HTTP {response.status_code})",
             status_code=response.status_code,
-            instructions=(
-                "Renew the grid credential (voms-proxy-init, or refresh "
-                "~/.globus/usercert.pem and userkey.pem) or point "
-                "CMSMCP_GRID_CERT_FILE/CMSMCP_GRID_KEY_FILE at a valid one and retry."
-            ),
+            instructions=setup_hint("grid", "A valid grid credential"),
         )
     return json_body(response, source=SOURCE)
 

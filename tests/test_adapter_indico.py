@@ -265,7 +265,7 @@ async def test_get_event_empty_without_token_suggests_indico_token(tmp_path: Pat
     with pytest.raises(InvalidInputError) as caught:
         await indico.get_event(client, settings, event_id="1574433")
     assert "protected" in caught.value.message
-    assert "CMSMCP_INDICO_API_TOKEN" in (caught.value.instructions or "")
+    assert "cmsmcp setup indico" in (caught.value.instructions or "")
 
 
 async def test_get_event_unknown_with_token_reports_plain_not_found(tmp_path: Path) -> None:
@@ -282,7 +282,7 @@ async def test_search_events_empty_without_token_notes_protection(tmp_path: Path
     settings, client = make_client(tmp_path, recorder, token=None)
     result = await indico.search_events(client, settings, category_id="2091")
     assert result.items == []
-    assert "CMSMCP_INDICO_API_TOKEN" in (result.note or "")
+    assert "cmsmcp setup indico" in (result.note or "")
 
 
 async def test_search_events_empty_with_token_has_plain_note(tmp_path: Path) -> None:

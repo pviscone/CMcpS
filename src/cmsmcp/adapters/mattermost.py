@@ -425,6 +425,33 @@ async def get_channel(
     }
 
 
+_PRIVATE_TYPES = frozenset({"D", "G"})
+_CHANNEL_TYPES: dict[str, str] = {}
+
+
+async def channel_type(client: SafeHttpClient, settings: Settings, channel_id: str) -> str | None:
+    """``O``/``P``/``D``/``G`` for a channel id (cached per process)."""
+    channel_id = _check_id(channel_id, "channel")
+    if channel_id not in _CHANNEL_TYPES:
+        response = await client.request(
+            "GET",
+            _api(settings, f"/channels/{channel_id}"),
+            service_headers=_service_headers(settings),
+        )
+        _guard_session(response)
+        payload = json_body(response, source="mattermost channel")
+        kind = payload.get("type") if isinstance(payload, dict) else None
+        if not isinstance(kind, str):
+            return None
+        _CHANNEL_TYPES[channel_id] = kind
+    return _CHANNEL_TYPES[channel_id]
+
+
+def is_private_type(kind: str | None) -> bool:
+    """Direct (``D``) and group (``G``) messages are personal content."""
+    return kind in _PRIVATE_TYPES
+
+
 async def search_posts(
     client: SafeHttpClient,
     settings: Settings,

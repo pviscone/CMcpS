@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from cmsmcp.config.settings import Settings
-from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError, setup_hint
 from cmsmcp.contracts.results import SearchResult
 from cmsmcp.net.proc import CommandResult, run_command
 
@@ -78,11 +78,7 @@ def make_runner(settings: Settings) -> Callable[[Sequence[str]], Awaitable[Comma
         if not credential.is_file() or not os.access(credential, os.R_OK):
             raise UpstreamError(
                 f"grid credential is not readable: {credential}",
-                instructions=(
-                    "Point CMSMCP_GRID_CERT_FILE/CMSMCP_GRID_KEY_FILE at a valid "
-                    "grid user certificate and key (default ~/.globus), or run "
-                    "voms-proxy-init and set them to the proxy."
-                ),
+                instructions=setup_hint("grid", "Grid access (certificate or VOMS proxy)"),
             )
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),

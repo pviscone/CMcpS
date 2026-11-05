@@ -51,7 +51,26 @@ from cmsmcp.credentials import (
 from cmsmcp.policy import PendingApprovals
 
 COMMANDS = ("login", "setup", "status", "doctor", "logout", "audit", "approve", "serve")
-SETUP_STEPS = ("sso", "kerberos", "lxplus", "grid", *(t.name for t in TOKENS), "rucio", "policy")
+# Core: what nearly every tool needs. Everything else is optional and is set up
+# on demand: a tool that needs a missing credential answers with the exact
+# `cmsmcp setup <step>` to run, so nothing is asked up front.
+# Three tiers: `cmsmcp setup` = CERN SSO only; `--tokens` adds the long-lived
+# personal API tokens; `--all` adds Kerberos, lxplus, grid, Rucio and the
+# personal-data/actions policy.
+CORE_STEPS = ("sso",)
+TOKEN_STEPS = tuple(t.name for t in TOKENS)
+FULL_ONLY_STEPS = ("kerberos", "lxplus", "grid", "rucio", "policy")
+OPTIONAL_STEPS = TOKEN_STEPS + FULL_ONLY_STEPS
+SETUP_STEPS = CORE_STEPS + OPTIONAL_STEPS
+TIERS = {"sso": CORE_STEPS, "tokens": CORE_STEPS + TOKEN_STEPS, "all": SETUP_STEPS}
+OPTIONAL_GUIDE = {
+    "kerberos": "kinit ticket (lxplus, EOS, browser-free SSO login)",
+    "lxplus": "run read-only queries on lxplus over Kerberos",
+    "grid": "grid certificate / VOMS proxy (DAS, DQM GUI, Rucio)",
+    **{t.name: t.unlocks for t in TOKENS},
+    "rucio": "your Rucio account name",
+    "policy": "opt in to personal data (Mattermost DMs) and enable confirmed actions",
+}
 _WRITE_SCOPES = frozenset({"api", "write_repository", "sudo", "admin_mode"})
 
 
@@ -165,8 +184,8 @@ class Setup:
     def settings(self) -> Settings:
         return self.settings_factory()
 
-    def run(self, steps: Sequence[str]) -> int:
-        chosen = list(steps) or list(SETUP_STEPS)
+    def run(self, steps: Sequence[str], *, tier: str = "sso") -> int:
+        chosen = list(steps) or list(TIERS[tier])
         unknown = [s for s in chosen if s not in SETUP_STEPS]
         if unknown:
             self.io.say(
@@ -186,6 +205,14 @@ class Setup:
         self.io.say(
             "\nSummary:\n" + format_status(asyncio.run(gather_status(self.settings, live=False)))
         )
+        skipped = [step for step in OPTIONAL_STEPS if step not in chosen]
+        if skipped:
+            self.io.say(
+                "\nOptional extras (set up any time; a tool that needs one will tell you):\n"
+                + "\n".join(f"  cmsmcp setup {s:<11} {OPTIONAL_GUIDE[s]}" for s in skipped)
+                + "\n  cmsmcp setup --tokens    all personal API tokens"
+                + "\n  cmsmcp setup --all       everything (tokens, Kerberos, lxplus, grid, ...)"
+            )
         self.io.say(
             "\nAdd cmsmcp to your MCP client, e.g. Claude Code:\n"
             "  claude mcp add cmsmcp -- uvx --from <path-or-git-url> cmsmcp\n"
@@ -199,6 +226,8 @@ class Setup:
 
     def step_sso(self) -> None:
         self.io.say("CERN SSO: needed by almost every tool (Indico, TWiki, GLANCE, CMS Talk, ...).")
+        for problem in dependency_problems(self.settings):
+            self.io.say(f"  note: {problem}")
         if self._keep(check_sso(self.settings)):
             return
         choice = (
@@ -212,6 +241,8 @@ class Setup:
         if choice.startswith("k"):
             from cmsmcp.login import run as login_run  # noqa: PLC0415
 
+            if asyncio.run(check_kerberos(self.settings)).state != OK:
+                self.step_kerberos()
             login_run([], settings=self.settings)
         elif choice.startswith("b"):
             try:
@@ -342,6 +373,24 @@ class Setup:
             set_option("confirm_mode", None)
 
 
+def dependency_problems(settings: Settings) -> list[str]:
+    """Local prerequisites of the core sign-in paths that are missing."""
+    problems = []
+    if settings.browser_executable is None:
+        problems.append(
+            "no Chromium/Chrome found for browser sign-in and SSO-rendered pages: install "
+            "one, or run `uvx playwright install chromium` and set CMSMCP_BROWSER_EXECUTABLE"
+        )
+    try:
+        import gssapi  # noqa: F401, PLC0415
+    except ImportError:
+        problems.append(
+            "Kerberos login needs the optional extra: install with `cmsmcp[kerberos]` "
+            "(needs libkrb5-dev); browser sign-in works without it"
+        )
+    return problems
+
+
 # --------------------------------------------------------------- commands
 def cmd_status(settings: Settings, *, live: bool) -> int:
     rows = asyncio.run(gather_status(settings, live=live))
@@ -430,8 +479,25 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("serve", help="run the MCP server over stdio (default)")
     sub.add_parser("login", help="CERN SSO via Kerberos + 2FA in the terminal", add_help=False)
-    setup = sub.add_parser("setup", help="guided credential setup")
-    setup.add_argument("steps", nargs="*", help=f"subset of: {', '.join(SETUP_STEPS)}")
+    setup = sub.add_parser(
+        "setup", help="guided setup: CERN SSO by default; --tokens or --all for more"
+    )
+    setup.add_argument("steps", nargs="*", help=f"optional steps: {', '.join(OPTIONAL_STEPS)}")
+    tier = setup.add_mutually_exclusive_group()
+    tier.add_argument(
+        "--tokens",
+        action="store_const",
+        const="tokens",
+        dest="tier",
+        help="SSO + long-lived API tokens (GitLab, Indico, Jira, Mattermost, GitHub)",
+    )
+    tier.add_argument(
+        "--all",
+        action="store_const",
+        const="all",
+        dest="tier",
+        help="everything: tokens, Kerberos, lxplus, grid, Rucio, personal data/actions",
+    )
     sub.add_parser("status", help="what is configured (local checks)")
     sub.add_parser("doctor", help="test every connection and token")
     logout = sub.add_parser("logout", help="remove stored credentials")
@@ -454,7 +520,7 @@ def main(argv: Sequence[str]) -> int:  # noqa: PLR0911
     args = _parser().parse_args(list(argv))
     settings = Settings()
     if args.command == "setup":
-        return Setup(IO()).run(args.steps)
+        return Setup(IO()).run(args.steps, tier=args.tier or "sso")
     if args.command in {"status", "doctor"}:
         return cmd_status(settings, live=args.command == "doctor")
     if args.command == "logout":

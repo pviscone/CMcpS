@@ -30,10 +30,12 @@ from cmsmcp.tools.inspire import register_inspire_tools
 from cmsmcp.tools.jira import register_jira_tools
 from cmsmcp.tools.mattermost import register_mattermost_tools
 from cmsmcp.tools.mcm import register_mcm_tools
+from cmsmcp.tools.mine import register_mine_tools
 from cmsmcp.tools.mkdocs import register_mkdocs_tools
 from cmsmcp.tools.pdftools import register_pdftools_tools
 from cmsmcp.tools.phonebook import register_phonebook_tools
 from cmsmcp.tools.runregistry import register_runregistry_tools
+from cmsmcp.tools.search import register_search_tools
 from cmsmcp.tools.servicenow import register_servicenow_tools
 from cmsmcp.tools.twiki import register_twiki_tools
 from cmsmcp.tools.websites import register_websites_tools
@@ -49,6 +51,8 @@ def register_adapter_tools(
 ) -> None:
     """Register every adapter tool set behind the shared guard and policy."""
     policy = policy or Policy(settings)
+    register_search_tools(server, settings, auth, http, policy)
+    register_mine_tools(server, settings, auth, http, policy)
     register_indico_tools(server, settings, auth, http)
     register_inspire_tools(server, settings, auth, http)
     register_gitlab_tools(server, settings, auth, http)
@@ -57,7 +61,7 @@ def register_adapter_tools(
     register_cmsresults_tools(server, settings, auth, http)
     register_cmsonline_tools(server, settings, auth, http)
     register_jira_tools(server, settings, auth, http)
-    register_mattermost_tools(server, settings, auth, http)
+    register_mattermost_tools(server, settings, auth, http, policy)
     register_mcm_tools(server, settings, http)
     register_das_tools(server, settings)
     register_dqm_tools(server, settings, http)

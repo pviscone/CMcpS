@@ -241,6 +241,7 @@ PHONEBOOK_TOOLS = {
     "phonebook_search",
     "phonebook_last_update",
 }
+GATEWAY_TOOLS = {"cern_search", "mine_overview"}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -273,11 +274,14 @@ ALL_TOOLS = (
     | SERVICENOW_TOOLS
     | RUNREGISTRY_TOOLS
     | PHONEBOOK_TOOLS
+    | GATEWAY_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
 # any argument-specific backend work.
 ADAPTER_CALLS: dict[str, dict[str, Any]] = {
+    "cern_search": {"query": "tracker"},
+    "mine_overview": {},
     "indico_get_user_info": {},
     "indico_search_events": {},
     "indico_search": {"query": "higgs"},

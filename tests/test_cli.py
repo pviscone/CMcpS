@@ -135,3 +135,24 @@ def test_approve_marks_pending_action(tmp_path: Path) -> None:
     assert cmd_approve(settings, None, deny=False, io=io) == 0
     assert queue.load()[key]["approved"] is True
     assert any(f"approval_id={key}" in line for line in said)
+
+
+def test_default_setup_runs_only_core_and_lists_extras(tmp_path: Path) -> None:
+    io, said = _io(["y"])  # keep the (absent) SSO state as is -> skip
+    steps: list[str] = []
+    setup = Setup(io, lambda: Settings(state_dir=tmp_path))
+    setup.step_sso = lambda: steps.append("sso")  # type: ignore[method-assign]
+    setup.step_grid = lambda: steps.append("grid")  # type: ignore[method-assign]
+    assert setup.run([]) == 0
+    assert steps == ["sso"]
+    text = "\n".join(said)
+    assert "cmsmcp setup grid" in text and "--all" in text
+    steps.clear()
+    setup.step_token = lambda _spec: steps.append("token")  # type: ignore[method-assign]
+    for name in ("kerberos", "lxplus", "rucio", "policy"):
+        setattr(setup, f"step_{name}", lambda n=name: steps.append(n))
+    setup.run([], tier="tokens")
+    assert steps == ["sso"] + ["token"] * 5
+    steps.clear()
+    setup.run([], tier="all")
+    assert steps[0] == "sso" and {"kerberos", "grid", "policy"} <= set(steps)
