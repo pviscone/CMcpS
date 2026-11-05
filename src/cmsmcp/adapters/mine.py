@@ -44,6 +44,11 @@ async def _gitlab_get(
         params=params,
         service_headers=_gitlab_headers(settings),
     )
+    if response.status_code in {401, 403} and not settings.gitlab_token:
+        raise UpstreamError(
+            "your GitLab queues need a GitLab token: run `cmsmcp setup gitlab`",
+            status_code=response.status_code,
+        )
     if response.status_code != _OK:
         raise UpstreamError(
             f"GitLab answered HTTP {response.status_code} for {path}",
