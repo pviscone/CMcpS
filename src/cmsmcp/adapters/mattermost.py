@@ -448,8 +448,31 @@ async def channel_type(client: SafeHttpClient, settings: Settings, channel_id: s
 
 
 def is_private_type(kind: str | None) -> bool:
-    """Direct (``D``) and group (``G``) messages are personal content."""
-    return kind in _PRIVATE_TYPES
+    """Direct (``D``) and group (``G``) messages are personal content; an
+    unknown type is treated as private (fail closed)."""
+    return kind not in {"O", "P"}
+
+
+async def file_channel_id(client: SafeHttpClient, settings: Settings, file_id: str) -> str | None:
+    """Channel an attachment belongs to (file info, else its post)."""
+    file_id = _check_id(file_id, "file")
+    response = await client.request(
+        "GET", _api(settings, f"/files/{file_id}/info"), service_headers=_service_headers(settings)
+    )
+    _guard_session(response)
+    info = json_body(response, source=f"mattermost file {file_id} info")
+    if isinstance(info, dict) and isinstance(info.get("channel_id"), str) and info["channel_id"]:
+        return info["channel_id"]
+    post_id = info.get("post_id") if isinstance(info, dict) else None
+    if not isinstance(post_id, str) or not post_id:
+        return None
+    post = await client.request(
+        "GET", _api(settings, f"/posts/{post_id}"), service_headers=_service_headers(settings)
+    )
+    _guard_session(post)
+    data = json_body(post, source=f"mattermost post {post_id}")
+    channel = data.get("channel_id") if isinstance(data, dict) else None
+    return channel if isinstance(channel, str) and channel else None
 
 
 async def search_posts(
@@ -505,8 +528,10 @@ async def search_posts(
     if include_direct_messages:
         scope = "this team's channels plus your direct/group messages"
     else:
-        private = await _direct_channel_ids(client, settings, team_id) if items else set()
-        items = [item for item in items if item.get("channel_id") not in private]
+        # Fail closed: keep only hits from this team's own channels (anything
+        # else, including a hit without a channel id, is treated as private).
+        allowed = await _team_channel_ids(client, settings, team_id) if items else set()
+        items = [item for item in items if item.get("channel_id") in allowed]
         hidden = backend_count - len(items)
         scope = (
             f"this team's channels; {hidden} direct/group message hit(s) on this "
@@ -531,11 +556,11 @@ async def search_posts(
     )
 
 
-async def _direct_channel_ids(client: SafeHttpClient, settings: Settings, team_id: str) -> set[str]:
-    """Ids of the user's direct (``D``) and group (``G``) conversations.
+async def _team_channel_ids(client: SafeHttpClient, settings: Settings, team_id: str) -> set[str]:
+    """Ids of this team's own (non-DM/GM) channels the user belongs to.
 
     The CERN fork's per-team channel list is account-wide and includes every
-    DM/GM (verified), so one call identifies them all.
+    DM/GM (verified), so one call gives the allowlist.
     """
     response = await client.request(
         "GET",
@@ -548,7 +573,10 @@ async def _direct_channel_ids(client: SafeHttpClient, settings: Settings, team_i
     return {
         c["id"]
         for c in channels
-        if isinstance(c, dict) and c.get("type") in {"D", "G"} and isinstance(c.get("id"), str)
+        if isinstance(c, dict)
+        and c.get("team_id") == team_id
+        and c.get("type") not in _PRIVATE_TYPES
+        and isinstance(c.get("id"), str)
     }
 
 

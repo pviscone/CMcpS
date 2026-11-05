@@ -579,3 +579,21 @@ async def test_json_post_sso_bounce_warms_site_and_retries_once(
     hosts = [request.url.host for request in requests]
     assert hosts == ["cmsrunregistry.web.cern.ch", "auth.cern.ch", "cmsrunregistry.web.cern.ch"]
     assert warmed == [["https://cmsrunregistry.web.cern.ch/"]]
+
+
+async def test_service_headers_do_not_follow_cross_host_redirects(settings: Settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "indico.cern.ch":
+            return httpx.Response(302, headers={"Location": "https://other.cern.ch/landing"})
+        return httpx.Response(200, content=b"ok")
+
+    settings = settings.model_copy(update={"require_sso": False})
+    client, requests = _client_with_transport(handler, settings)
+    await client.request(
+        "GET",
+        "https://indico.cern.ch/attachment",
+        authenticated=False,
+        service_headers={"Authorization": "Bearer indp_secret"},
+    )
+    assert requests[0].headers["Authorization"] == "Bearer indp_secret"
+    assert "authorization" not in requests[1].headers

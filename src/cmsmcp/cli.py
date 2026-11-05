@@ -51,7 +51,7 @@ from cmsmcp.credentials import (
     lxplus_target,
     ssh_options,
 )
-from cmsmcp.policy import PendingApprovals
+from cmsmcp.policy import PendingApprovals, printable
 
 COMMANDS = ("login", "connect", "setup", "status", "doctor", "logout", "audit", "approve", "serve")
 # Core: what nearly every tool needs. Everything else is optional and is set up
@@ -351,7 +351,8 @@ class Setup:
             "Personal data and actions.\n"
             "  Personal sources (e.g. your Mattermost direct messages) stay hidden from the agent\n"
             "  unless you opt in. Actions (posting, commenting, submitting jobs) are off by\n"
-            "  default and, when on, each one asks for your confirmation."
+            "  default and, when on, each one asks for your confirmation. If your agent host\n"
+            "  answers MCP prompts automatically (agent SDKs, headless runs), choose [a]."
         )
         dms = "mattermost_dm" in settings.personal_sources
         if _yes(
@@ -487,8 +488,9 @@ def cmd_approve(settings: Settings, key: str | None, *, deny: bool, io: IO | Non
     for name, entry in entries.items():
         age = int(time.time() - float(entry.get("created", 0)))
         io.say(
-            f"\n[{name}] {entry.get('tool')}: {entry.get('summary')}  ({age}s ago)\n"
-            + json.dumps(entry.get("details"), indent=2, ensure_ascii=False)
+            f"\n[{name}] {printable(str(entry.get('tool')))}: "
+            f"{printable(str(entry.get('summary')))}  ({age}s ago)\n"
+            + json.dumps(entry.get("details"), indent=2, ensure_ascii=True)
         )
         if entry.get("approved"):
             io.say("  already approved; the agent can run it.")
@@ -560,6 +562,13 @@ def main(argv: Sequence[str]) -> int:  # noqa: PLR0911
     if args.command == "audit":
         return cmd_audit(settings, args.n)
     if args.command == "approve":
+        if not args.deny and not sys.stdin.isatty():
+            print(
+                "cmsmcp approve must be run by you in an interactive terminal "
+                "(it refuses piped input so an agent cannot approve its own actions).",
+                file=sys.stderr,
+            )
+            return 2
         return cmd_approve(settings, args.id, deny=args.deny)
     print("Run `cmsmcp` without arguments to start the MCP server.", file=sys.stderr)
     return 2

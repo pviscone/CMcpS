@@ -51,12 +51,50 @@ _ticket_checked_at = 0.0
 
 
 def check_path(path: str) -> str:
-    """Accept only absolute /eos, /afs or /cvmfs paths without traversal."""
+    """Accept only absolute /eos, /afs or /cvmfs paths without traversal or credentials.
+
+    Applies to every lxplus tool, reads included: a read that returned a key,
+    keytab, ticket cache or proxy would hand the credential to the model with
+    no confirmation (the path is shell-quoted and never globbed, so this path
+    denylist holds, unlike the best-effort one for free-form commands).
+    """
     cleaned = path.strip()
     if not _PATH_RE.fullmatch(cleaned) or "/../" in f"{cleaned}/" or cleaned.endswith("/.."):
         raise InvalidInputError(
             f"unsupported path {path!r}",
             instructions="Use an absolute /eos/..., /afs/... or /cvmfs/... path without '..'.",
+        )
+    if _CREDENTIAL_PATTERNS.search(cleaned) or "/private/" in f"{cleaned}/":
+        raise PolicyViolationError(
+            "the path points at credential material or a private directory",
+            instructions="cmsmcp never reads keys, tickets, keytabs, proxies or ~/private.",
+        )
+    return cleaned
+
+
+def own_areas(settings: Settings) -> tuple[str, ...]:
+    """The user's own AFS/EOS areas (code is only ever run from these)."""
+    user = settings.lxplus_user or ""
+    initial = user[:1]
+    return (
+        f"/afs/cern.ch/user/{initial}/{user}/",
+        f"/afs/cern.ch/work/{initial}/{user}/",
+        f"/eos/user/{initial}/{user}/",
+        f"/eos/home-{initial}/{user}/",
+        f"/eos/cms/store/user/{user}/",
+    )
+
+
+def check_own_path(settings: Settings, path: str) -> str:
+    """A path inside the user's own areas: anything that *executes* project
+    files (CRAB/SCRAM environments, submit files) must not run code from
+    another user's readable directory."""
+    cleaned = check_path(path)
+    if not settings.lxplus_user or not f"{cleaned}/".startswith(own_areas(settings)):
+        raise PolicyViolationError(
+            f"{path!r} is not in your own AFS/EOS area",
+            instructions="Only directories under your own /afs/cern.ch/{user,work}/ or "
+            "/eos/user/ (or /eos/cms/store/user/) areas can be used here.",
         )
     return cleaned
 
@@ -231,14 +269,36 @@ def _approved(approval: ApprovedAction, tool: str) -> None:
         raise PolicyViolationError("action approval does not cover this lxplus command")
 
 
+async def inspect_submit_file(settings: Settings, *, submit_file: str) -> dict[str, Any]:
+    """SHA-256 and the first lines of a submit file, shown in the confirmation."""
+    path = check_own_path(settings, submit_file)
+    script = (
+        f"sha256sum -- {shlex.quote(path)} | cut -d' ' -f1 && head -n 40 -- {shlex.quote(path)}"
+    )
+    result = await run_remote(settings, shell_command=script)
+    if result.exit_code != 0:
+        raise UpstreamError(f"cannot read {path}: {result.stderr.decode(errors='replace')[-300:]}")
+    digest, _, head = result.stdout.decode(errors="replace").partition("\n")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest.strip()):
+        raise UpstreamError(f"could not hash {path}")
+    return {"submit_file": path, "sha256": digest.strip(), "first_lines": head[:4_000]}
+
+
 async def condor_submit(
-    settings: Settings, *, submit_file: str, approval: ApprovedAction
+    settings: Settings, *, submit_file: str, sha256: str, approval: ApprovedAction
 ) -> dict[str, Any]:
+    """Submit exactly the file the user saw: the hash is re-checked remotely."""
     _approved(approval, "lxplus_condor_submit")
-    path = check_path(submit_file)
-    directory = str(Path(path).parent)
-    script = f"cd {shlex.quote(directory)} && condor_submit {shlex.quote(Path(path).name)}"
-    return _result(script, await run_remote(settings, shell_command=script))
+    path = check_own_path(settings, submit_file)
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise InvalidInputError("bad sha256")
+    name = shlex.quote(f"./{Path(path).name}")
+    script = (
+        f"cd {shlex.quote(str(Path(path).parent))}"
+        f" && echo {shlex.quote(f'{sha256}  ./{Path(path).name}')} | sha256sum -c --quiet"
+        f" && condor_submit {name}"
+    )
+    return _result(f"condor_submit {path}", await run_remote(settings, shell_command=script))
 
 
 async def condor_remove(
@@ -262,10 +322,15 @@ async def run_command_on_lxplus(
     return _result(command, result)
 
 
-def _crab_script(cmssw_src: str, task_dir: str, subcommand: str) -> str:
-    """CRAB inside the user's CMSSW area (cmsenv + CRAB from CVMFS)."""
-    src = check_path(cmssw_src)
-    task = check_path(task_dir) if task_dir.startswith("/") else task_dir
+def crab_script(settings: Settings, cmssw_src: str, task_dir: str, subcommand: str) -> str:
+    """CRAB inside the user's *own* CMSSW area (cmsenv + CRAB from CVMFS).
+
+    ``scramv1 runtime`` output is eval'd and CRAB unpickles the task's request
+    cache, so both directories must be the user's own: a path in another
+    user's readable area would run their code as this user.
+    """
+    src = check_own_path(settings, cmssw_src)
+    task = check_own_path(settings, task_dir) if task_dir.startswith("/") else task_dir
     if not re.fullmatch(r"[A-Za-z0-9._/-]+", task) or ".." in task:
         raise InvalidInputError(f"bad CRAB task directory {task_dir!r}")
     return (
@@ -278,7 +343,7 @@ def _crab_script(cmssw_src: str, task_dir: str, subcommand: str) -> str:
 
 
 async def crab_status(settings: Settings, *, cmssw_src: str, task_dir: str) -> dict[str, Any]:
-    script = _crab_script(cmssw_src, task_dir, "status")
+    script = crab_script(settings, cmssw_src, task_dir, "status")
     return _result(f"crab status -d {task_dir}", await run_remote(settings, shell_command=script))
 
 
@@ -286,5 +351,5 @@ async def crab_resubmit(
     settings: Settings, *, cmssw_src: str, task_dir: str, approval: ApprovedAction
 ) -> dict[str, Any]:
     _approved(approval, "lxplus_crab_resubmit")
-    script = _crab_script(cmssw_src, task_dir, "resubmit")
+    script = crab_script(settings, cmssw_src, task_dir, "resubmit")
     return _result(f"crab resubmit -d {task_dir}", await run_remote(settings, shell_command=script))

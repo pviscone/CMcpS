@@ -25,7 +25,7 @@ _CONFIRMED = (
 )
 
 
-def register_action_tools(
+def register_action_tools(  # noqa: C901 - one closure per tool
     server: MCPServer,
     settings: Settings,
     auth: AuthService,
@@ -55,6 +55,13 @@ def register_action_tools(
             text = check_text_arg(message, "message", max_len=16_000)
             info = await mattermost.get_channel(http, settings, channel_id=channel)
             target = info.get("display_name") or info.get("name") or channel
+            if info.get("type") == "D":
+                # A DM's display name is empty; name the other participant.
+                me = (await mattermost.get_me(http, settings)).get("user_id")
+                others = [u for u in str(info.get("name", "")).split("__") if u and u != me]
+                if others:
+                    peer = await mattermost.get_user(http, settings, user_id=others[0])
+                    target = f"@{peer.get('username') or others[0]}"
             kind = {"D": "direct message", "G": "group message"}.get(
                 str(info.get("type")), "channel"
             )
@@ -96,7 +103,7 @@ def register_action_tools(
         approval_id: _APPROVAL = None,
     ) -> ToolEnvelope:
         async def run() -> dict:
-            text = check_text_arg(body, "body")
+            text = actions.check_no_quick_actions(check_text_arg(body, "body"), "comment")
             approval = await policy.confirm(
                 ctx,
                 tool="gitlab_comment",
@@ -130,7 +137,9 @@ def register_action_tools(
     ) -> ToolEnvelope:
         async def run() -> dict:
             clean_title = check_text_arg(title, "title", max_len=255)
-            text = check_text_arg(description, "description")
+            text = actions.check_no_quick_actions(
+                check_text_arg(description, "description"), "description"
+            )
             approval = await policy.confirm(
                 ctx,
                 tool="gitlab_create_issue",

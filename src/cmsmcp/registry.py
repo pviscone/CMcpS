@@ -207,7 +207,9 @@ class CmsMcpServer(MCPServer):
             tool_group = group or group_of(tool_name)
             if not self._admits(tool_group, effect):
                 return fn
-            hidden = self._lazy and tool_group != CORE_GROUP and tool_name != "cern_search"
+            # Act tools are never hidden: they stay listed with their destructive
+            # annotation, so cmsmcp_call (a read-annotated tool) cannot reach them.
+            hidden = self._lazy and effect in READ_EFFECTS and tool_group != CORE_GROUP
             ann = annotations or ToolAnnotations(
                 read_only_hint=effect in READ_EFFECTS,
                 destructive_hint=effect == Effect.ACT_EXTERNAL,

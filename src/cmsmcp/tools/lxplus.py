@@ -89,7 +89,7 @@ def register_lxplus_tools(  # noqa: C901 - one closure per tool
     @server.tool(
         name="lxplus_crab_status",
         description=(
-            "`crab status` of one CRAB task, run in the user's CMSSW area on lxplus "
+            "`crab status` of one CRAB task, run in the user's own CMSSW area on lxplus "
             "(cmssw_src = .../CMSSW_X/src; task_dir = crab project dir, relative to it or "
             "absolute). Needs a valid grid proxy on lxplus. " + _SETUP
         ),
@@ -109,6 +109,7 @@ def register_lxplus_tools(  # noqa: C901 - one closure per tool
         cmssw_src: str, task_dir: str, ctx: Context, approval_id: _APPROVAL = None
     ) -> ToolEnvelope:
         async def run() -> dict:
+            lxplus.crab_script(settings, cmssw_src, task_dir, "resubmit")  # validate first
             approval = await policy.confirm(
                 ctx,
                 tool="lxplus_crab_resubmit",
@@ -127,24 +128,32 @@ def register_lxplus_tools(  # noqa: C901 - one closure per tool
         name="lxplus_condor_submit",
         effect=Effect.ACT_OWN,
         description=(
-            "Submit an existing HTCondor submit file (on EOS/AFS) from its directory on "
-            "lxplus. The user confirms every submission. " + _SETUP
+            "Submit an existing HTCondor submit file from the user's own AFS/EOS area. The "
+            "user confirms the file's hash and first lines; the hash is re-checked before "
+            "submitting. " + _SETUP
         ),
     )
     async def lxplus_condor_submit(
         submit_file: str, ctx: Context, approval_id: _APPROVAL = None
     ) -> ToolEnvelope:
         async def run() -> dict:
-            path = lxplus.check_path(submit_file)
+            # The user confirms the file's content (hash + first lines), and the
+            # hash is re-checked on lxplus right before condor_submit runs.
+            seen = await lxplus.inspect_submit_file(settings, submit_file=submit_file)
             approval = await policy.confirm(
                 ctx,
                 tool="lxplus_condor_submit",
-                summary=f"condor_submit {path} on lxplus",
-                details={"submit_file": path},
+                summary=f"condor_submit {seen['submit_file']} on lxplus",
+                details=seen,
                 hosts=("lxplus",),
                 approval_id=approval_id,
             )
-            return await lxplus.condor_submit(settings, submit_file=path, approval=approval)
+            return await lxplus.condor_submit(
+                settings,
+                submit_file=seen["submit_file"],
+                sha256=seen["sha256"],
+                approval=approval,
+            )
 
         return await enveloped(run)
 
@@ -176,8 +185,9 @@ def register_lxplus_tools(  # noqa: C901 - one closure per tool
         description=(
             "Run one shell command on lxplus as the user, after the user confirms the exact "
             "command. Prefer the specific lxplus_* tools; use this for anything else "
-            "(e.g. `dasgoclient`, `crab status -d DIR`, `ls` in a work area). Commands "
-            "touching credentials are refused. " + _SETUP
+            "(e.g. `dasgoclient`, `ls` in a work area). A best-effort filter refuses "
+            "commands that visibly touch credentials; the user's confirmation is the "
+            "real control. " + _SETUP
         ),
     )
     async def lxplus_run(

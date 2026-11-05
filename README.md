@@ -3,7 +3,7 @@
 cmsmcp is one Model Context Protocol server that gives an AI agent access to the CERN and CMS services **you** can reach, as you: Indico, TWiki/CMS docs, GLANCE (CADI), CMS Talk, Mattermost, GitLab, GitHub (cms-sw), Jira, CDS, INSPIRE, DocDB, OMS/E-Log, Run Registry, DQM, HLT, DAS, McM, XSDB, Rucio, ServiceNow, EDMS, the Phonebook, and your lxplus files and HTCondor/CRAB jobs (~180 tools).
 
 - **Your access, your credentials.** CERN SSO (browser or Kerberos + 2FA) plus optional personal tokens (GitLab, Indico, Jira, Mattermost, GitHub), a Kerberos ticket for lxplus, and a grid proxy for DAS/DQM/Rucio. Secrets stay in owner-only files; the model never sees them.
-- **Read by default, act only with your confirmation.** Write tools (post to Mattermost, comment on GitLab/Jira, submit/remove HTCondor jobs, CRAB resubmit, a shell command on lxplus) exist only when you enable actions, and every single call asks you to confirm the exact payload, outside the model.
+- **Read by default, act only with your confirmation.** Write tools (post to Mattermost, comment on GitLab/Jira, submit/remove HTCondor jobs, CRAB resubmit, a shell command on lxplus) exist only when you enable actions, and every single call asks you to confirm the exact payload (see the limits below).
 - **Token-efficient.** Results are compact text (not pretty-printed JSON twice), no output schemas, per-result budgets, tool profiles, an optional lazy mode, `cern_search` (many sources in one call) and `mine_overview` (your queues in one call).
 
 ## Quick start
@@ -48,9 +48,10 @@ Secrets live in `~/.config/cmsmcp/secrets/<field>` (mode 0600, ignored if readab
 
 ## Personal data and actions
 
-- Personal content needs your opt-in (`cmsmcp setup policy` or `CMSMCP_PERSONAL_SOURCES=mattermost_dm`): Mattermost direct/group messages are hidden from search, channel history and threads otherwise.
+- Personal content needs your opt-in (`cmsmcp setup policy` or `CMSMCP_PERSONAL_SOURCES=mattermost_dm`): without it Mattermost direct/group messages and their attachments are hidden from search, channel history, threads and downloads (fail-closed: unknown channels count as private), and the generic `cern_fetch_page` / `cern_download_file` refuse Mattermost URLs.
 - Actions need `CMSMCP_ACTIONS_ENABLED=true`. Each call is confirmed by you: through the MCP client's elicitation prompt (shows the exact payload and which sources the session has read), or, with `CMSMCP_CONFIRM_MODE=approve` or clients without elicitation, out of band with `cmsmcp approve <id>`, after which the agent retries with `approval_id`. Approvals are single-use, bound to the exact parameters, and expire after 15 minutes. `CMSMCP_CONFIRM_MODE=deny` refuses all actions.
-- The only write path in the HTTP client requires a confirmation-minted `ApprovedAction` scoped to the target host; lxplus commands touching credentials are refused even when approved.
+- By convention the only write paths (the HTTP client's `request_action`, the lxplus action runners) take the host-scoped `ApprovedAction` that the confirmation returns. lxplus never reads credential files or `~/private` (all tools), runs CRAB/SCRAM/submit files only from your own AFS/EOS areas, and shows a submit file's hash and first lines for confirmation (re-checked before submitting). GitLab comments/issues containing quick-action lines (`/merge`, `/approve`, …) are refused. The free-form `lxplus_run` filter for credential-touching commands is best-effort; your confirmation is the real control.
+- **Limits of confirmation.** Elicitation trusts your MCP client to show the prompt to *you*; agent-SDK or headless hosts may answer it automatically, so use `CMSMCP_CONFIRM_MODE=approve` (or `deny`) there. `cmsmcp approve` refuses piped input and the server honours only approval ids it issued, but an agent with unrestricted shell access as you can still drive any same-user channel: do not give such an agent unattended shell access together with actions.
 - Retrieved content is labelled as untrusted data. cmsmcp sends content to whichever model your client uses; check CERN/CMS rules before pointing a commercial model at internal material.
 
 ### Run without a developer checkout (`uvx`)
@@ -484,8 +485,8 @@ directory.web.cern.ch is a Drupal portal whose search tabs delegate to CDS, Indi
 lxplus asks for a second factor after Kerberos, so cmsmcp never logs in unattended: `cmsmcp connect` opens an SSH control master once (kinit + 2FA code) and every tool reuses it for `CMSMCP_LXPLUS_PERSIST` (default 12h). Requires `CMSMCP_LXPLUS_USER` (`cmsmcp setup lxplus`).
 
 - `lxplus_eos_ls`, `lxplus_read_file` (text, bounded), `lxplus_download_file` (into local storage), `lxplus_quota`, `lxplus_condor_queue`, `lxplus_condor_history`, `lxplus_crab_status` (in your CMSSW area).
-- Actions (confirmed): `lxplus_condor_submit`, `lxplus_condor_remove`, `lxplus_crab_resubmit`, `lxplus_run` (one shell command; commands touching tickets, keytabs, SSH/grid keys or cmsmcp secrets are refused).
-- Paths are restricted to `/eos`, `/afs`, `/cvmfs` without traversal; every remote argument is shell-quoted.
+- Actions (confirmed): `lxplus_condor_submit` (own area; hash + first lines confirmed), `lxplus_condor_remove`, `lxplus_crab_resubmit` (own area), `lxplus_run` (one shell command; a best-effort filter refuses visibly credential-touching commands).
+- Paths are restricted to `/eos`, `/afs`, `/cvmfs` without traversal, never credential files or `~/private`; every remote argument is shell-quoted; CRAB and submit files run only from your own areas.
 
 ## GitHub tools (api.github.com; cms-sw/cmssw by default)
 
@@ -550,7 +551,7 @@ The session store and its state directory are written with owner-only permission
 
 - Reads are the default; every tool declares an effect class (`read`, `read-personal`, `act-own`, `act-external`) and the server, not the prompt, enforces it.
 - The shared HTTP layer accepts `GET`/`HEAD`, an explicit host-allowlisted set of read-only JSON/form POST *query* endpoints (ServiceNow portal search, CMS Online portlet forms, Mattermost post search), and one write path that requires a user-confirmed, host-scoped `ApprovedAction`; writes never follow redirects.
-- Requests are constrained to configured host allowlists; authenticated cookies are injected only after RFC 6265 host/domain and path checks; personal tokens are sent only to their own service.
+- Requests are constrained to configured host allowlists; authenticated cookies are injected only after RFC 6265 host/domain and path checks; personal tokens are sent only to the host they belong to and dropped on cross-host redirects.
 - Saved browser state is minimized to allowlisted cookies; localStorage origins are never persisted.
 - Redirects are bounded and re-checked; response and download sizes are bounded; downloads stay inside cmsmcp state storage (collisions resolved by SHA-256, nothing silently overwritten).
 - Network failures are reported as retryable `UPSTREAM_ERROR`, never disguised as policy violations.

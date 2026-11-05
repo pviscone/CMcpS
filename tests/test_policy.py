@@ -158,3 +158,42 @@ async def test_mattermost_dm_reads_need_personal_opt_in(
     )
     allowed = json.loads((await opened.call_tool("mattermost_get_posts", args)).content[0].text)
     assert allowed["status"] == "ok"
+
+
+async def test_forged_queue_entries_are_never_honoured(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    digest = __import__("cmsmcp.policy", fromlist=["action_digest"]).action_digest(
+        CALL["tool"], CALL["details"]
+    )
+    # Written into the queue file by someone other than this server process.
+    forged = policy.pending.add(CALL["tool"], "x", CALL["details"], digest)
+    policy.pending.set_approved(forged, True)
+    with pytest.raises(ActionDeclinedError):
+        await policy.confirm(None, approval_id=forged, **CALL)
+
+
+async def test_confirmation_text_cannot_hide_characters(tmp_path: Path) -> None:
+    ctx = _Ctx(_Accepted(True))
+    await _policy(tmp_path).confirm(
+        ctx,
+        **{
+            **CALL,
+            "summary": "post \x1b[2Jhidden",
+            "details": {"message": "rm -rf \u202e~ \u200b"},
+        },
+    )
+    text = ctx.messages[0]
+    assert "\x1b" not in text and "\u202e" not in text and "\u200b" not in text
+    assert "\\u202e" in text
+
+
+def test_audit_redacts_url_secrets(tmp_path: Path) -> None:
+    policy = Policy(Settings(state_dir=tmp_path))
+    policy.audit(
+        "cern_download_file",
+        Effect.READ,
+        {"url": "https://x.cern.ch/f?access_token=SECRETVALUE"},
+        status="ok",
+        elapsed=0.0,
+    )
+    assert "SECRETVALUE" not in (tmp_path / "audit.jsonl").read_text()

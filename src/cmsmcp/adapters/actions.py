@@ -28,6 +28,20 @@ JIRA_HOST = "its.cern.ch"
 _ID_RE = re.compile(r"^[a-z0-9]{26}$")
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 _CREATED = frozenset({200, 201})
+# GitLab executes quick actions (/merge, /approve, /close, /assign, ...) found in
+# notes and descriptions created through the API: a confirmed "comment" could
+# carry a state change the confirmation never named.
+_QUICK_ACTION_RE = re.compile(r"^\s*/[a-z_]+", re.MULTILINE)
+
+
+def check_no_quick_actions(text: str, what: str) -> str:
+    if _QUICK_ACTION_RE.search(text):
+        raise InvalidInputError(
+            f"the {what} contains a line starting with '/', which GitLab would run as a "
+            "quick action (e.g. /merge, /approve, /close)",
+            instructions="Indent or rephrase that line; quick actions are not supported.",
+        )
+    return text
 
 
 def _check(response: SafeResponse, what: str) -> dict[str, Any]:

@@ -41,7 +41,10 @@ def register_mattermost_tools(  # noqa: C901 - one closure per tool
     dm_label = "Mattermost direct/group messages"
 
     async def _require_dm_access(channel_id: str | None) -> None:
-        if channel_id and mattermost.is_private_type(
+        # Fail closed: an unknown channel or type counts as private.
+        if policy.personal_allowed("mattermost_dm"):
+            return
+        if not channel_id or mattermost.is_private_type(
             await mattermost.channel_type(http, settings, channel_id)
         ):
             policy.require_personal("mattermost_dm", dm_label)
@@ -266,7 +269,10 @@ def register_mattermost_tools(  # noqa: C901 - one closure per tool
         ),
     )
     async def mattermost_download_file(file_id: str) -> ToolEnvelope:
-        """Bounded file download."""
-        return await guarded(
-            auth, lambda: mattermost.download_file(http, settings, file_id=file_id)
-        )
+        """Bounded file download (attachments of DMs need the opt-in)."""
+
+        async def run() -> dict:
+            await _require_dm_access(await mattermost.file_channel_id(http, settings, file_id))
+            return await mattermost.download_file(http, settings, file_id=file_id)
+
+        return await guarded(auth, run)

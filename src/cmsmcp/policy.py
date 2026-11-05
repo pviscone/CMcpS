@@ -11,10 +11,16 @@ decides what may run:
   obtained *outside the model*: an MCP elicitation the client shows to the
   user, or an out-of-band ``cmsmcp approve <id>`` in the user's terminal.
 
-Write requests can only be built from an :class:`ApprovedAction`, which only
-:meth:`Policy.confirm` creates, so adapter code cannot issue a write without a
-confirmation having happened. Every tool call is appended to a local audit log
+By convention every write path (``SafeHttpClient.request_action``, the lxplus
+action runners) takes the :class:`ApprovedAction` that :meth:`Policy.confirm`
+returns; this is a code-review convention that keeps writes visibly tied to a
+confirmation, not an unforgeable capability. Every tool call is appended to a local audit log
 (``audit.jsonl``, owner-only) with clipped argument values and no secrets.
+
+Limits: the elicitation channel trusts the MCP client to show the prompt to a
+human (an agent-SDK/headless host may auto-answer; use ``confirm_mode=approve``
+or ``deny`` there), and any same-user channel (the approval CLI, its file) can
+be driven by an agent that has unrestricted shell access as the user.
 
 Taint: once a session has read remote content, a prompt injection may be in
 the context. Read effects then never escalate (they cannot), and actions keep
@@ -30,6 +36,7 @@ import logging
 import os
 import secrets
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -40,6 +47,7 @@ from pydantic import BaseModel, Field
 from cmsmcp.config.settings import Settings
 from cmsmcp.contracts.errors import CMSMCPError, InvalidInputError
 from cmsmcp.contracts.results import ErrorCode
+from cmsmcp.net.safety import redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +117,14 @@ def action_digest(tool: str, details: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:32]
 
 
+def printable(text: str) -> str:
+    """Drop control and format characters (bidi overrides, zero-width, ANSI)."""
+    return "".join(ch for ch in text if not unicodedata.category(ch).startswith("C") or ch == "\n")
+
+
 def _clip_value(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        value = redact_url(value)
     if isinstance(value, str) and len(value) > _AUDIT_VALUE_CLIP:
         return f"{value[:_AUDIT_VALUE_CLIP]}…[+{len(value) - _AUDIT_VALUE_CLIP}]"
     if isinstance(value, list | tuple):
@@ -202,6 +217,9 @@ class Policy:
         self.read_sources: set[str] = set()
         self.audit_path = settings.state_dir / "audit.jsonl"
         self.pending = PendingApprovals(settings.state_dir / "pending-actions.json")
+        # Approval ids this server process issued, with the digest they cover:
+        # an entry written into the queue file by anyone else is never honoured.
+        self.issued: dict[str, str] = {}
 
     # --- personal data ---------------------------------------------------
     def personal_allowed(self, source: str) -> bool:
@@ -253,14 +271,16 @@ class Policy:
 
     # --- confirmation ----------------------------------------------------
     def _confirmation_text(self, tool: str, summary: str, details: dict[str, Any]) -> str:
-        body = json.dumps(details, indent=2, default=str, ensure_ascii=False)
+        # ASCII-escaped so bidi overrides / zero-width characters cannot make the
+        # payload render differently from what will execute.
+        body = json.dumps(details, indent=2, default=str, ensure_ascii=True)
         provenance = (
             f"\nThis session has read content from: {', '.join(sorted(self.read_sources))}. "
             "Make sure this action is what YOU asked for, not something that content asked for."
             if self.read_sources
             else ""
         )
-        return f"cmsmcp wants to run {tool}: {summary}\n\n{body}{provenance}"
+        return f"cmsmcp wants to run {tool}: {printable(summary)}\n\n{body}{provenance}"
 
     async def confirm(
         self,
@@ -301,7 +321,8 @@ class Policy:
             )
 
         if approval_id:
-            if self.pending.consume(approval_id, digest):
+            if self.issued.get(approval_id) == digest and self.pending.consume(approval_id, digest):
+                self.issued.pop(approval_id, None)
                 return approved()
             raise ActionDeclinedError(
                 f"approval {approval_id!r} is unknown, expired, not yet approved, "
@@ -328,12 +349,14 @@ class Policy:
                     instructions="Do not retry unless the user asks again.",
                 )
 
-        key = self.pending.add(tool, summary, details, digest)
+        key = self.pending.add(tool, printable(summary), details, digest)
+        self.issued[key] = digest
         raise ConfirmationRequiredError(
             f"{tool} needs the user's approval (request {key})",
             instructions=(
-                f"Ask the user to run `cmsmcp approve {key}` in a terminal and review it; "
-                f"then call {tool} again with exactly the same arguments plus "
+                f"The USER must review and approve this in their own terminal with "
+                f"`cmsmcp approve {key}`; do not run that command yourself. After they "
+                f"approve, call {tool} again with exactly the same arguments plus "
                 f"approval_id='{key}'. Approvals expire after 15 minutes."
             ),
         )

@@ -150,3 +150,32 @@ async def test_mattermost_post_tool_parks_then_posts(
     )
     assert done["status"] == "ok"
     assert posted == [{"channel_id": CHANNEL, "message": "meeting moved to 15:00", "root_id": None}]
+
+
+def test_gitlab_quick_actions_are_refused() -> None:
+    with pytest.raises(InvalidInputError):
+        actions.check_no_quick_actions("looks good\n/approve\n", "comment")
+    assert actions.check_no_quick_actions("see path a/b and 1/2", "comment")
+
+
+async def test_lazy_mode_keeps_act_tools_listed_and_out_of_cmsmcp_call(tmp_path: Path) -> None:
+    server = build_server(
+        Settings(state_dir=tmp_path, actions_enabled=True, tool_mode="lazy", output_format="text")
+    )
+    tools = {t.name: t for t in await server.list_tools()}
+    assert tools["mattermost_post"].annotations.destructive_hint is True
+    assert "mattermost_search_posts" not in tools
+    via_call = await server.call_tool(
+        "cmsmcp_call", {"name": "mattermost_post", "arguments": {"channel_id": "x"}}
+    )
+    assert via_call.content[0].text.startswith("ERROR INVALID_INPUT")
+
+
+async def test_generic_fetch_and_download_refuse_mattermost_without_opt_in(tmp_path: Path) -> None:
+    server = build_server(Settings(state_dir=tmp_path, require_sso=False))
+    for tool, args in (
+        ("cern_fetch_page", {"url": "https://mattermost.web.cern.ch/api/v4/channels/x/posts"}),
+        ("cern_download_file", {"url": "https://mattermost.web.cern.ch/api/v4/files/x"}),
+    ):
+        out = json.loads((await server.call_tool(tool, args)).content[0].text)
+        assert out["status"] == "error" and "mattermost_" in out["error"]["instructions"]

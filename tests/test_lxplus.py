@@ -72,12 +72,58 @@ async def test_actions_need_matching_approval(tmp_path: Path, ssh: list[list[str
         await lxplus.condor_remove(settings, job_id="12", approval=_approval("lxplus_run"))
     await lxplus.condor_remove(settings, job_id="12", approval=_approval("lxplus_condor_remove"))
     assert ssh[-1][-1] == "condor_rm 12"
+    sha = "a" * 64
     await lxplus.condor_submit(
         settings,
-        submit_file="/afs/cern.ch/user/j/jdoe/job.sub",
+        submit_file="/afs/cern.ch/user/j/jdoe/-verbose",
+        sha256=sha,
         approval=_approval("lxplus_condor_submit"),
     )
-    assert ssh[-1][-1] == "cd /afs/cern.ch/user/j/jdoe && condor_submit job.sub"
+    # The hash the user confirmed is re-checked, and ./ keeps a dash-name from
+    # becoming a condor_submit option.
+    assert ssh[-1][-1] == (
+        f"cd /afs/cern.ch/user/j/jdoe && echo '{sha}  ./-verbose' | sha256sum -c --quiet"
+        " && condor_submit ./-verbose"
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/afs/cern.ch/user/j/jdoe/.ssh/id_ed25519",
+        "/afs/cern.ch/user/j/jdoe/private/jdoe.keytab",
+        "/afs/cern.ch/user/j/jdoe/.globus/userkey.pem",
+        "/eos/user/j/jdoe/private/notes.txt",
+    ],
+)
+async def test_reads_never_touch_credentials(
+    tmp_path: Path, ssh: list[list[str]], path: str
+) -> None:
+    with pytest.raises(PolicyViolationError):
+        await lxplus.read_file(_settings(tmp_path), path=path)
+    with pytest.raises(PolicyViolationError):
+        await lxplus.download_file(_settings(tmp_path), path=path)
+    assert ssh == []
+
+
+async def test_crab_and_submit_only_from_own_areas(tmp_path: Path, ssh: list[list[str]]) -> None:
+    settings = _settings(tmp_path)
+    foreign = "/afs/cern.ch/user/a/attacker/public/CMSSW_13_0_0/src"
+    with pytest.raises(PolicyViolationError):
+        await lxplus.crab_status(settings, cmssw_src=foreign, task_dir="crab_x")
+    with pytest.raises(PolicyViolationError):
+        await lxplus.crab_status(
+            settings,
+            cmssw_src="/afs/cern.ch/user/j/jdoe/CMSSW_13_0_0/src",
+            task_dir="/eos/user/a/attacker/crab_x",
+        )
+    with pytest.raises(PolicyViolationError):
+        await lxplus.inspect_submit_file(settings, submit_file="/eos/user/a/attacker/job.sub")
+    assert ssh == []
+    await lxplus.crab_status(
+        settings, cmssw_src="/afs/cern.ch/work/j/jdoe/CMSSW_13_0_0/src", task_dir="crab_ok"
+    )
+    assert ssh[-1][-1].endswith("crab status -d crab_ok")
 
 
 async def test_unconfigured_user_points_to_setup(tmp_path: Path) -> None:

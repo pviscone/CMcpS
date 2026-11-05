@@ -6,6 +6,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
@@ -34,7 +35,7 @@ from cmsmcp.contracts.results import (
 )
 from cmsmcp.net.client import SafeHttpClient
 from cmsmcp.net.safety import validate_url
-from cmsmcp.policy import Policy
+from cmsmcp.policy import PersonalSourceDisabledError, Policy
 from cmsmcp.registry import CmsMcpServer, enabled_groups
 from cmsmcp.tools import register_adapter_tools
 
@@ -51,6 +52,19 @@ def _failure(exc: Exception) -> ToolEnvelope:
     )
 
 
+def _refuse_personal_hosts(url: str, policy: Policy) -> None:
+    """The generic page/download tools carry the whole SSO session (including
+    Mattermost's MMAUTHTOKEN); without the DM opt-in they must not become a
+    side door around the Mattermost tools' personal-data gating."""
+    host = (urlsplit(url).hostname or "").lower()
+    if host.endswith("mattermost.web.cern.ch") and not policy.personal_allowed("mattermost_dm"):
+        raise PersonalSourceDisabledError(
+            "Mattermost is read through the mattermost_* tools, not generic page fetches",
+            instructions="Use mattermost_search_posts / mattermost_get_posts / "
+            "mattermost_download_file.",
+        )
+
+
 async def _cern_fetch_page_payload(
     settings: Settings,
     auth: AuthService,
@@ -59,10 +73,12 @@ async def _cern_fetch_page_payload(
     wait_for: str | None,
     timeout_seconds: int,
     max_chars: int,
+    policy: Policy,
 ) -> ToolEnvelope:
     """Handler for the cern_fetch_page tool (kept out of build_server)."""
     try:
         validate_url(url, allowed_hosts=settings.allowed_hosts)
+        _refuse_personal_hosts(url, policy)
         await auth.ensure_authenticated()
         payload = await auth.fetch_page(
             url,
@@ -96,9 +112,11 @@ async def _cern_download_file_payload(
     *,
     url: str,
     filename: str | None,
+    policy: Policy,
 ) -> ToolEnvelope:
     """Handler for the cern_download_file tool (kept out of build_server)."""
     try:
+        _refuse_personal_hosts(url, policy)
         destination: Path | None = None
         if filename is not None:
             cleaned = filename.strip()
@@ -262,6 +280,7 @@ def build_server(  # noqa: C901 - per-tool registration blocks dominate the bran
             wait_for=wait_for,
             timeout_seconds=timeout_seconds,
             max_chars=max_chars,
+            policy=policy,
         )
 
     http = SafeHttpClient(runtime_settings, auth_service=runtime_auth)
@@ -291,7 +310,7 @@ def build_server(  # noqa: C901 - per-tool registration blocks dominate the bran
         ] = None,
     ) -> ToolEnvelope:
         """Download one CERN-hosted file through the SSO session."""
-        return await _cern_download_file_payload(http, url=url, filename=filename)
+        return await _cern_download_file_payload(http, url=url, filename=filename, policy=policy)
 
     register_adapter_tools(server, runtime_settings, runtime_auth, http, policy)
 

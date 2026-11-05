@@ -637,3 +637,25 @@ async def test_pat_header_reaches_get_and_post(tmp_path: Path) -> None:
     assert router.requests[0].headers["Authorization"] == f"Bearer {TEST_PAT}"
     assert router.requests[-1].headers["Authorization"] == f"Bearer {TEST_PAT}"
     assert router.requests[-1].method == "POST"
+
+
+async def test_search_posts_fails_closed_on_unknown_channels(tmp_path: Path) -> None:
+    router = _dm_search_router()
+    unknown = {**POST_DOC_2, "id": "q" * 26, "channel_id": "u" * 26}
+    no_channel = {**POST_DOC_2, "id": "w" * 26, "channel_id": ""}
+    router.add(
+        "POST",
+        f"/api/v4/teams/{TEAM_ID}/posts/search",
+        lambda _r: httpx.Response(
+            200,
+            json={
+                "order": [POST_ID_1, "q" * 26, "w" * 26],
+                "posts": {POST_ID_1: POST_DOC_1, "q" * 26: unknown, "w" * 26: no_channel},
+            },
+        ),
+    )
+    client = make_client(tmp_path, router)
+    result = await mattermost.search_posts(client, client.settings, team_id=TEAM_ID, terms="x")
+    assert [item["post_id"] for item in result.items] == [POST_ID_1]
+    assert mattermost.is_private_type(None) and mattermost.is_private_type("D")
+    assert not mattermost.is_private_type("O")

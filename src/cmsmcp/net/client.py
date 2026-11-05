@@ -55,6 +55,13 @@ def _transport_error(action: str, url: str, exc: httpx.HTTPError) -> UpstreamErr
     return error
 
 
+def _same_host(url: str, origin_host: str | None) -> bool:
+    """Operator credentials (service headers) only go to the host they were
+    issued for; a redirect to another (even allowlisted) host drops them, just
+    as cookies are re-scoped per hop."""
+    return (urlsplit(url).hostname or "") == (origin_host or "")
+
+
 def _sha256(path: Path) -> str:
     """Streaming SHA-256 of one file."""
     digest = hashlib.sha256()
@@ -317,10 +324,11 @@ class SafeHttpClient:
         safe_method = validate_method(method)
         safe_headers = validate_headers(headers)
         target = validate_url(url, allowed_hosts=self.settings.allowed_hosts)
+        origin_host = urlsplit(target).hostname
 
         for redirects_seen in range(self.settings.max_redirects + 1):
             request_headers = dict(safe_headers)
-            if service_headers:
+            if service_headers and _same_host(target, origin_host):
                 request_headers.update(service_headers)
             if cookie := await self._cookie_for(target, authenticated=authenticated):
                 request_headers["Cookie"] = cookie
@@ -422,7 +430,7 @@ class SafeHttpClient:
             raise PolicyViolationError(f"POST is restricted to {list(allowlist)}, got {host}")
         for redirects_seen in range(self.settings.max_redirects + 1):
             request_headers: dict[str, str] = dict(validate_headers(headers))
-            if service_headers:
+            if service_headers and _same_host(target, host):
                 request_headers.update(service_headers)
             if cookie := await self._cookie_for(target, authenticated=authenticated):
                 request_headers["Cookie"] = cookie
@@ -608,8 +616,11 @@ class SafeHttpClient:
         session = await self.auth_service.ensure_authenticated() if authenticated else None
         try:
             try:
+                origin_host = urlsplit(target).hostname
                 for redirects_seen in range(self.settings.max_redirects + 1):
-                    headers: dict[str, str] = dict(service_headers or {})
+                    headers: dict[str, str] = (
+                        dict(service_headers or {}) if _same_host(target, origin_host) else {}
+                    )
                     if session and (header := session.cookie_header_for(target)):
                         headers["Cookie"] = header
                     async with self._client_for(target).stream(
