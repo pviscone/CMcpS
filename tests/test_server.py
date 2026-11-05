@@ -242,6 +242,14 @@ PHONEBOOK_TOOLS = {
     "phonebook_last_update",
 }
 GATEWAY_TOOLS = {"cern_search", "mine_overview"}
+LXPLUS_TOOLS = {
+    "lxplus_eos_ls",
+    "lxplus_read_file",
+    "lxplus_download_file",
+    "lxplus_quota",
+    "lxplus_condor_queue",
+    "lxplus_condor_history",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -275,6 +283,7 @@ ALL_TOOLS = (
     | RUNREGISTRY_TOOLS
     | PHONEBOOK_TOOLS
     | GATEWAY_TOOLS
+    | LXPLUS_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before

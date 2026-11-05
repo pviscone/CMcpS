@@ -187,6 +187,8 @@ class Settings(BaseSettings):
     lxplus_user: str | None = None
     ssh_executable: str | None = Field(default_factory=lambda: shutil.which("ssh"))
     ssh_timeout_seconds: float = Field(default=60.0, gt=0, le=900)
+    # How long the `cmsmcp connect` SSH master stays open (OpenSSH time format).
+    lxplus_persist: str = Field(default="12h", pattern=r"^\d+[smhdw]?$")
 
     # --- Grid / Rucio --------------------------------------------------------
     rucio_base_url: str = "https://cms-rucio.cern.ch"

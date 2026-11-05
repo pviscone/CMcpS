@@ -47,10 +47,13 @@ from cmsmcp.credentials import (
     check_token,
     format_status,
     gather_status,
+    lxplus_master_alive,
+    lxplus_target,
+    ssh_options,
 )
 from cmsmcp.policy import PendingApprovals
 
-COMMANDS = ("login", "setup", "status", "doctor", "logout", "audit", "approve", "serve")
+COMMANDS = ("login", "connect", "setup", "status", "doctor", "logout", "audit", "approve", "serve")
 # Core: what nearly every tool needs. Everything else is optional and is set up
 # on demand: a tool that needs a missing credential answers with the exact
 # `cmsmcp setup <step>` to run, so nothing is asked up front.
@@ -281,8 +284,10 @@ class Setup:
         if user == "-":
             return
         set_option("lxplus_user", user)
-        result = asyncio.run(check_lxplus(self.settings))
-        self.io.say(f"  {result.state}: {result.detail}")
+        if _yes(
+            self.io, "  Open the lxplus connection now (Kerberos + your 2FA code)?", default=True
+        ):
+            cmd_connect(self.settings, io=self.io)
 
     def step_grid(self) -> None:
         self.io.say("Grid: an X.509 certificate/VOMS proxy for DAS, the DQM GUI and Rucio.")
@@ -392,6 +397,30 @@ def dependency_problems(settings: Settings) -> list[str]:
 
 
 # --------------------------------------------------------------- commands
+def cmd_connect(settings: Settings, *, io: IO | None = None) -> int:
+    """Open the reusable lxplus SSH connection (asks for the 2FA code once)."""
+    io = io or IO()
+    target = lxplus_target(settings)
+    if target is None or settings.ssh_executable is None:
+        io.say("Set your CERN username first: `cmsmcp setup lxplus`.")
+        return 2
+    if asyncio.run(lxplus_master_alive(settings)):
+        io.say(f"Already connected to {target}.")
+        return 0
+    if asyncio.run(check_kerberos(settings)).state != OK:
+        io.say("No valid Kerberos ticket: running kinit first.")
+        io.run(["kinit", f"{settings.lxplus_user}@CERN.CH"])
+    io.say(f"Connecting to {target}; enter your CERN 2FA code if asked.")
+    code = io.run(
+        [settings.ssh_executable, *ssh_options(settings, interactive=True), "-fN", target]
+    )
+    if code == 0 and asyncio.run(lxplus_master_alive(settings)):
+        io.say(f"Connected. cmsmcp reuses this connection for {settings.lxplus_persist}.")
+        return 0
+    io.say("Connection failed; check `kinit` and your 2FA code, then retry.")
+    return 1
+
+
 def cmd_status(settings: Settings, *, live: bool) -> int:
     rows = asyncio.run(gather_status(settings, live=live))
     if live:
@@ -479,6 +508,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("serve", help="run the MCP server over stdio (default)")
     sub.add_parser("login", help="CERN SSO via Kerberos + 2FA in the terminal", add_help=False)
+    sub.add_parser("connect", help="open the reusable lxplus connection (2FA once)")
     setup = sub.add_parser(
         "setup", help="guided setup: CERN SSO by default; --tokens or --all for more"
     )
@@ -521,6 +551,8 @@ def main(argv: Sequence[str]) -> int:  # noqa: PLR0911
     settings = Settings()
     if args.command == "setup":
         return Setup(IO()).run(args.steps, tier=args.tier or "sso")
+    if args.command == "connect":
+        return cmd_connect(settings)
     if args.command in {"status", "doctor"}:
         return cmd_status(settings, live=args.command == "doctor")
     if args.command == "logout":

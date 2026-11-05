@@ -188,29 +188,52 @@ def check_actions(settings: Settings) -> Check:
 
 
 # ----------------------------------------------------------------- live checks
+def lxplus_target(settings: Settings) -> str | None:
+    return f"{settings.lxplus_user}@{settings.lxplus_host}" if settings.lxplus_user else None
+
+
+async def lxplus_master_alive(settings: Settings) -> bool:
+    """Whether the reusable lxplus SSH connection (``cmsmcp connect``) is open."""
+    target = lxplus_target(settings)
+    if target is None or settings.ssh_executable is None:
+        return False
+    result = await run_command(
+        [settings.ssh_executable, *ssh_options(settings), "-O", "check", target],
+        timeout_seconds=10,
+    )
+    return result.exit_code == 0
+
+
 async def check_lxplus(settings: Settings) -> Check:
     if settings.ssh_executable is None:
         return Check(MISSING, "ssh not installed")
-    target = f"{settings.lxplus_user}@{settings.lxplus_host}" if settings.lxplus_user else None
+    target = lxplus_target(settings)
     if target is None:
         return Check(MISSING, "CMSMCP_LXPLUS_USER not set: `cmsmcp setup lxplus`")
+    if not await lxplus_master_alive(settings):
+        return Check(WARN, f"no open connection to {target}: run `cmsmcp connect` (2FA once)")
     result = await run_command(
         [settings.ssh_executable, *ssh_options(settings), target, "echo", "cmsmcp-ok"],
         timeout_seconds=30,
     )
     if result.exit_code == 0 and b"cmsmcp-ok" in result.stdout:
-        return Check(OK, f"Kerberos SSH to {target} works")
+        return Check(OK, f"connected to {target} (reused connection)")
     err = result.stderr.decode(errors="replace").strip().splitlines()
-    return Check(FAIL, (err[-1] if err else "ssh failed") + " (kinit first?)")
+    return Check(FAIL, err[-1] if err else "ssh failed")
 
 
-def ssh_options(settings: Settings) -> list[str]:
-    """Non-interactive, Kerberos-only SSH with a shared control connection."""
+def ssh_options(settings: Settings, *, interactive: bool = False) -> list[str]:
+    """Kerberos SSH sharing one control connection.
+
+    lxplus requires a second factor after Kerberos (GSSAPI gives only "partial
+    success", verified), so tools cannot log in unattended. ``cmsmcp connect``
+    opens the control master interactively (the user types the 2FA code once)
+    and keeps it for ``CMSMCP_LXPLUS_PERSIST``; tool calls (``interactive=False``,
+    BatchMode) only ever reuse that master.
+    """
     settings.ensure_directories()
     control = settings.state_dir / "ssh-%C"
-    return [
-        "-o",
-        "BatchMode=yes",
+    options = [
         "-o",
         "GSSAPIAuthentication=yes",
         "-o",
@@ -218,18 +241,21 @@ def ssh_options(settings: Settings) -> list[str]:
         "-o",
         "PasswordAuthentication=no",
         "-o",
-        "PubkeyAuthentication=no",
-        "-o",
         "StrictHostKeyChecking=accept-new",
         "-o",
         "ConnectTimeout=15",
         "-o",
-        "ControlMaster=auto",
-        "-o",
         f"ControlPath={control}",
-        "-o",
-        "ControlPersist=10m",
     ]
+    if interactive:
+        return [
+            *options,
+            "-o",
+            "ControlMaster=yes",
+            "-o",
+            f"ControlPersist={settings.lxplus_persist}",
+        ]
+    return [*options, "-o", "BatchMode=yes", "-o", "ControlMaster=no"]
 
 
 Checker = Callable[[Settings], Awaitable[Check]]
@@ -243,7 +269,15 @@ async def gather_status(settings: Settings, *, live: bool) -> list[tuple[str, Ch
     if live:
         rows.append(("lxplus", await check_lxplus(settings)))
     elif settings.lxplus_user:
-        rows.append(("lxplus", Check(WARN, f"{settings.lxplus_user}: not tested (`doctor`)")))
+        alive = await lxplus_master_alive(settings)
+        rows.append(
+            (
+                "lxplus",
+                Check(OK, f"{lxplus_target(settings)}: connection open")
+                if alive
+                else Check(WARN, f"{lxplus_target(settings)}: run `cmsmcp connect` (2FA once)"),
+            )
+        )
     else:
         rows.append(("lxplus", Check(MISSING, "CMSMCP_LXPLUS_USER not set")))
     rows += [(spec.name, check_token(settings, spec)) for spec in TOKENS]

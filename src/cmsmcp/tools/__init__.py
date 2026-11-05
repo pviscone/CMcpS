@@ -28,6 +28,7 @@ from cmsmcp.tools.hypernews import register_hypernews_tools
 from cmsmcp.tools.indico import register_indico_tools
 from cmsmcp.tools.inspire import register_inspire_tools
 from cmsmcp.tools.jira import register_jira_tools
+from cmsmcp.tools.lxplus import register_lxplus_tools
 from cmsmcp.tools.mattermost import register_mattermost_tools
 from cmsmcp.tools.mcm import register_mcm_tools
 from cmsmcp.tools.mine import register_mine_tools
@@ -53,6 +54,7 @@ def register_adapter_tools(
     policy = policy or Policy(settings)
     register_search_tools(server, settings, auth, http, policy)
     register_mine_tools(server, settings, auth, http, policy)
+    register_lxplus_tools(server, settings, policy)
     register_indico_tools(server, settings, auth, http)
     register_inspire_tools(server, settings, auth, http)
     register_gitlab_tools(server, settings, auth, http)
