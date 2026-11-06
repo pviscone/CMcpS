@@ -8,17 +8,17 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cmcps.adapters import glance
-from cmcps.auth.service import AuthService
-from cmcps.auth.tokens import ServiceTokenRecord, ServiceTokenStore
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import glance
+from cmsmcp.auth.service import AuthService
+from cmsmcp.auth.tokens import ServiceTokenRecord, ServiceTokenStore
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-ALCM_TOKEN = "unit-test-alcm-token"  # noqa: S105 - mock credential, not a real secret
-MEM_TOKEN = "unit-test-mem-token"  # noqa: S105 - mock credential, not a real secret
+ALCM_TOKEN = "unit-test-alcm-token"
+MEM_TOKEN = "unit-test-mem-token"
 
 ANALYSIS_PAYLOAD = {
     "analysis": [
@@ -223,7 +223,7 @@ async def test_missing_alcm_token_rejected_without_request(tmp_path: Path) -> No
     settings, client = make_client(tmp_path, recorder, alcm_token=None, mem_token=None)
     with pytest.raises(InvalidInputError) as excinfo:
         await glance.alcm_user(client, settings)
-    assert "CMCPS_GLANCE_ALCM_TOKEN" in (excinfo.value.instructions or "")
+    assert "CMSMCP_GLANCE_ALCM_TOKEN" in (excinfo.value.instructions or "")
     assert "cms-alcm-api-prod" in (excinfo.value.instructions or "")
     assert recorder.requests == []
 
@@ -241,9 +241,9 @@ async def test_401_maps_to_helpful_upstream(tmp_path: Path) -> None:
 async def test_captured_bearer_wins_over_env_token(tmp_path: Path) -> None:
     record = ServiceTokenRecord(
         service="glance_alcm",
-        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",  # noqa: S106
+        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",
         client_id="cms-alcm-client-prod",
-        access_token="captured-alcm-value",  # noqa: S106
+        access_token="captured-alcm-value",
         refresh_token=None,
         access_expires_at=None,
     )
@@ -262,9 +262,9 @@ async def test_captured_bearer_wins_over_env_token(tmp_path: Path) -> None:
 async def test_captured_membership_bearer_wins_over_env_token(tmp_path: Path) -> None:
     record = ServiceTokenRecord(
         service="glance_membership",
-        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",  # noqa: S106
+        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",
         client_id="cms-membership-client-prod",
-        access_token="captured-mem-value",  # noqa: S106
+        access_token="captured-mem-value",
         refresh_token=None,
         access_expires_at=None,
     )

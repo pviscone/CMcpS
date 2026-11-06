@@ -1,4 +1,4 @@
-"""Shared CMcpS test fixtures."""
+"""Shared cmsmcp test fixtures."""
 
 from __future__ import annotations
 
@@ -9,21 +9,27 @@ from typing import Any
 
 import pytest
 
-from cmcps.config.settings import Settings
+from cmsmcp.config.settings import Settings
 
 
 @pytest.fixture(autouse=True)
-def _hermetic_cmcps_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tests must not depend on the operator's CMcpS environment.
+def _hermetic_cmsmcp_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Tests must not depend on the operator's cmsmcp environment.
 
-    ``Settings`` binds any field not passed explicitly to ``CMCPS_*`` env
-    vars, so a developer who exports e.g. ``CMCPS_MAX_RESPONSE_BYTES`` would
+    ``Settings`` binds any field not passed explicitly to ``CMSMCP_*`` env
+    vars, so a developer who exports e.g. ``CMSMCP_MAX_RESPONSE_BYTES`` would
     otherwise get different (and potentially failing) test behavior than
     everyone else. Clear the namespace; tests set what they need explicitly.
     """
     for key in list(os.environ):
-        if key.startswith("CMCPS_"):
+        if key.startswith("CMSMCP_"):
             monkeypatch.delenv(key, raising=False)
+    # Never read the developer's real secret files, and keep results
+    # machine-parseable (compact JSON) for assertions.
+    monkeypatch.setenv("CMSMCP_CONFIG_DIR", str(tmp_path_factory.mktemp("cmsmcp-config")))
+    monkeypatch.setenv("CMSMCP_OUTPUT_FORMAT", "json")
 
 
 @pytest.fixture

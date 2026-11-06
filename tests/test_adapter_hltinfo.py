@@ -9,16 +9,16 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cmcps.adapters import hltinfo
-from cmcps.auth.service import AuthService
-from cmcps.auth.tokens import ServiceTokenRecord, ServiceTokenStore
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import hltinfo
+from cmsmcp.auth.service import AuthService
+from cmsmcp.auth.tokens import ServiceTokenRecord, ServiceTokenStore
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-TEST_TOKEN = "unit-test-token"  # noqa: S105 - mock credential, not a real secret
+TEST_TOKEN = "unit-test-token"
 
 PATH_RESULT = {
     "result": {
@@ -257,9 +257,9 @@ async def test_run_lumis(tmp_path: Path) -> None:
 async def test_captured_bearer_wins_over_env_token(tmp_path: Path) -> None:
     captured_record = ServiceTokenRecord(
         service="hltinfo",
-        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",  # noqa: S106
+        token_endpoint="https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/token",
         client_id="cmshltinfo-frontend",
-        access_token="captured-access-value",  # noqa: S106
+        access_token="captured-access-value",
         refresh_token=None,
         access_expires_at=None,
     )

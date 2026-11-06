@@ -10,11 +10,11 @@ from typing import Any
 import httpx
 import pytest
 
-from cmcps.adapters import gitlab
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import gitlab
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -369,7 +369,7 @@ async def test_private_token_header_only_when_configured(tmp_path: Path) -> None
     settings, client = make_client(
         tmp_path,
         Recorder(lambda r: _record_and_respond(with_token, r)),
-        token="glpat-test",  # noqa: S106
+        token="glpat-test",
     )
     await gitlab.search_projects(client, settings)
 

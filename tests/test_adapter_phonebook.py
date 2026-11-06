@@ -8,15 +8,15 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cmcps.adapters import phonebook
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import phonebook
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-TEST_TOKEN = "unit-test-token"  # noqa: S105 - mock credential, not a real secret
+TEST_TOKEN = "unit-test-token"
 
 PERSON = {
     "type": "PERSON",

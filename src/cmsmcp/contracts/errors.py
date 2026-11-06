@@ -1,0 +1,125 @@
+"""Domain exceptions with safe tool-facing payloads."""
+
+from __future__ import annotations
+
+from cmsmcp.contracts.results import ErrorCode, ErrorPayload
+
+
+class CMSMCPError(Exception):
+    """Base class for expected cmsmcp failures."""
+
+    code = ErrorCode.INTERNAL_ERROR
+    retryable = False
+
+    def __init__(self, message: str, *, instructions: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.instructions = instructions
+
+    def to_payload(self) -> ErrorPayload:
+        """Return an error with cookie, token, and response bodies already excluded."""
+        return ErrorPayload(
+            code=self.code,
+            message=self.message,
+            retryable=self.retryable,
+            instructions=self.instructions,
+        )
+
+
+def setup_hint(step: str, what: str) -> str:
+    """Instruction for an optional credential that is not configured yet.
+
+    cmsmcp sets up only CERN SSO up front; everything else is offered on demand
+    through these hints so the agent can tell the user exactly what to run.
+    """
+    return (
+        f"{what} is an optional cmsmcp feature that is not set up. Ask the user to run "
+        f"`cmsmcp setup {step}` in a terminal (guided, about a minute), then retry."
+    )
+
+
+class AuthRequiredError(CMSMCPError):
+    """A protected action attempted to run before CERN SSO completed."""
+
+    code = ErrorCode.AUTH_REQUIRED
+
+    def __init__(self, message: str = "A valid CERN SSO session is required") -> None:
+        super().__init__(
+            message,
+            instructions=(
+                "Call cern_auth_sign_in (opens a browser login), or ask the user to run "
+                "`cmsmcp login` (Kerberos + 2FA, no browser) in a terminal; then retry."
+            ),
+        )
+
+
+class AuthTimeoutError(CMSMCPError):
+    """The browser login did not finish before its deadline."""
+
+    code = ErrorCode.AUTH_TIMEOUT
+    retryable = True
+
+
+class AuthCancelledError(CMSMCPError):
+    """The user closed the browser before authentication completed."""
+
+    code = ErrorCode.AUTH_CANCELLED
+    retryable = True
+
+
+class BrowserUnavailableError(CMSMCPError):
+    """Playwright could not find or start a visible browser."""
+
+    code = ErrorCode.BROWSER_UNAVAILABLE
+
+
+class InvalidInputError(CMSMCPError):
+    """A tool argument or runtime configuration value is outside its policy."""
+
+    code = ErrorCode.INVALID_INPUT
+
+
+class InvalidSessionError(CMSMCPError):
+    """The collected browser state does not contain a valid login."""
+
+    code = ErrorCode.INVALID_SESSION
+    retryable = True
+
+
+class SessionStoreError(CMSMCPError):
+    """Local session storage could not be read or written."""
+
+    code = ErrorCode.SESSION_STORE_ERROR
+
+
+class PolicyViolationError(CMSMCPError):
+    """A request violated the read-only or host policy."""
+
+    code = ErrorCode.POLICY_VIOLATION
+
+
+class RequestTooLargeError(CMSMCPError):
+    """A response or download exceeded its configured size limit."""
+
+    code = ErrorCode.REQUEST_TOO_LARGE
+
+
+class UpstreamError(CMSMCPError):
+    """A backend returned an error status or an undecodable body."""
+
+    code = ErrorCode.UPSTREAM_ERROR
+    TOO_MANY_REQUESTS = 429
+    SERVER_ERROR_MIN = 500
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        instructions: str | None = None,
+    ) -> None:
+        super().__init__(message, instructions=instructions)
+        self.status_code = status_code
+        self.retryable = status_code is not None and (
+            status_code == self.TOO_MANY_REQUESTS or status_code >= self.SERVER_ERROR_MIN
+        )

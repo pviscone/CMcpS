@@ -9,11 +9,11 @@ from typing import Any
 import httpx
 import pytest
 
-from cmcps.adapters import indico
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.client import SafeHttpClient
+from cmsmcp.adapters import indico
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.client import SafeHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -182,6 +182,48 @@ async def test_full_text_search_groups_by_type_and_is_get_only(tmp_path: Path) -
     assert all(request.method == "GET" for request in recorder.requests)
 
 
+async def test_full_text_search_compacts_and_caps_hits(tmp_path: Path) -> None:
+    """The backend ignores limit and returns heavy hits; both are trimmed."""
+    note = {
+        "type": "event_note",
+        "note_id": 387899,
+        "event_id": 1696549,
+        "contribution_id": 7134550,
+        "title": "OMS weekly meeting",
+        "url": "/event/1696549/note/387899",
+        "modified_dt": "2026-09-01T10:00:00+00:00",
+        "content": "x" * 50_000,
+        "category_path": [{"id": 1, "title": "Home"}, {"id": 2, "title": "OMS"}],
+        "event_path": [
+            {"id": 1696549, "title": "OMS weekly", "type": "event"},
+            {"id": 7134550, "title": "Aggregation Layer", "type": "contribution"},
+        ],
+        "highlight": {"content": ["Started an <em>MCP</em> service -&gt; oms-agg-<em>mcp</em>"]},
+        "user": {"name": "someone"},
+    }
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": [note] * 12})
+
+    settings, client = make_client(tmp_path, Recorder(handler))
+    result = await indico.search(client, settings, query="MCP", limit=3)
+    hits = result["results"]["event_note"]["items"]
+    assert len(hits) == 3
+    assert hits[0] == {
+        "type": "event_note",
+        "title": "OMS weekly meeting",
+        "url": "https://indico.cern.ch/event/1696549/note/387899",
+        "event_id": 1696549,
+        "contribution_id": 7134550,
+        "date": "2026-09-01T10:00:00+00:00",
+        "event": "OMS weekly",
+        "parent": "Aggregation Layer",
+        "category": "OMS",
+        "snippet": "Started an MCP service -> oms-agg-mcp",
+        "note_id": 387899,
+    }
+
+
 async def test_get_event_merges_contributions_and_sessions(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         detail = request.url.params.get("detail")
@@ -223,12 +265,12 @@ async def test_get_event_empty_without_token_suggests_indico_token(tmp_path: Pat
     with pytest.raises(InvalidInputError) as caught:
         await indico.get_event(client, settings, event_id="1574433")
     assert "protected" in caught.value.message
-    assert "CMCPS_INDICO_API_TOKEN" in (caught.value.instructions or "")
+    assert "cmsmcp setup indico" in (caught.value.instructions or "")
 
 
 async def test_get_event_unknown_with_token_reports_plain_not_found(tmp_path: Path) -> None:
     recorder = Recorder(lambda _: httpx.Response(200, json={"count": 0, "results": []}))
-    settings, client = make_client(tmp_path, recorder, token="indp_test")  # noqa: S106
+    settings, client = make_client(tmp_path, recorder, token="indp_test")
     with pytest.raises(InvalidInputError) as caught:
         await indico.get_event(client, settings, event_id="999999")
     assert caught.value.message == "Indico event '999999' was not found"
@@ -240,12 +282,12 @@ async def test_search_events_empty_without_token_notes_protection(tmp_path: Path
     settings, client = make_client(tmp_path, recorder, token=None)
     result = await indico.search_events(client, settings, category_id="2091")
     assert result.items == []
-    assert "CMCPS_INDICO_API_TOKEN" in (result.note or "")
+    assert "cmsmcp setup indico" in (result.note or "")
 
 
 async def test_search_events_empty_with_token_has_plain_note(tmp_path: Path) -> None:
     recorder = Recorder(lambda _: httpx.Response(200, json={"count": 0, "results": []}))
-    settings, client = make_client(tmp_path, recorder, token="indp_test")  # noqa: S106
+    settings, client = make_client(tmp_path, recorder, token="indp_test")
     result = await indico.search_events(client, settings, category_id="2091")
     assert result.note == "category_id=2091"
 
@@ -370,7 +412,7 @@ async def test_download_file_streams_with_bearer_token(tmp_path: Path) -> None:
         return httpx.Response(200, content=b"%PDF-1.7 bytes")
 
     recorder = Recorder(handler)
-    settings, client = make_client(tmp_path, recorder, token="indp_test")  # noqa: S106
+    settings, client = make_client(tmp_path, recorder, token="indp_test")
     result = await indico.download_file(
         client,
         settings,

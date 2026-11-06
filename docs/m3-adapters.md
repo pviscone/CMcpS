@@ -2,7 +2,7 @@
 
 Per-adapter endpoint discovery and contract notes, accumulated as each M3
 platform lands. Testing flags: default tests are fixture-only;
-`CMCPS_LIVE_PUBLIC=1` / `CMCPS_LIVE_CERN=1` gate live checks.
+`CMSMCP_LIVE_PUBLIC=1` / `CMSMCP_LIVE_CERN=1` gate live checks.
 
 ## Discourse (cms-talk, cms-pub-talk, root-forum, geant4-forum)
 
@@ -147,7 +147,7 @@ platform lands. Testing flags: default tests are fixture-only;
   (verified), so the stored KEYCLOAK_IDENTITY completes the whole chain
   silently. Registered as a `_COOKIE_ONLY_SITES` entry with an
   `MMAUTHTOKEN`-readiness check; the shared client's lazy warm covers both
-  GETs and the search POST. Optional fallback: `CMCPS_MATTERMOST_TOKEN`
+  GETs and the search POST. Optional fallback: `CMSMCP_MATTERMOST_TOKEN`
   personal access token as `Authorization: Bearer` (operator env only).
 - **Endpoints used**:
   - `GET /api/v4/users/me` (session probe), `GET /api/v4/users/{id}`,
@@ -190,7 +190,7 @@ platform lands. Testing flags: default tests are fixture-only;
     mapped sites). `has_more` ⇔ page reached the 100-hit cap.
   - `GET /api/v4/files/{id}/info` + `GET /api/v4/files/{id}` — file
     metadata then bounded download (server filename reduced to its basename
-    before writing into CMcpS storage).
+    before writing into cmsmcp storage).
 - **Normalization**: epoch-millisecond timestamps → ISO-8601; post items
   carry `user_id` (not usernames — no N+1 user lookups) and `file_ids`;
   permalinks (`/{team}/pl/<post_id>`) only where the team is known from
@@ -280,7 +280,7 @@ platform lands. Testing flags: default tests are fixture-only;
   stored in `cern-service-tokens.json` (0600, schema v1, `auth/tokens.py`).
   `AuthService.service_bearer()` returns a valid access token, refreshing
   via `grant_type=refresh_token` when expired and persisting the refresh.
-  Capture failure is non-fatal for sign-in; `CMCPS_HLTINFO_TOKEN` remains
+  Capture failure is non-fatal for sign-in; `CMSMCP_HLTINFO_TOKEN` remains
   the manual fallback. Adapter header policy = captured token, then env
   token.
 - **Known limits**: if the SPA changes its OIDC handshake or the refresh
@@ -345,12 +345,12 @@ Authenticated discovery (browser network inspection) found the mechanism:
   `BEARER_SERVICES` (same mechanism as hltinfo — a headless app-root load
   triggers the exchange, access+refresh stored in
   `cern-service-tokens.json`, silent refresh). Manual env fallbacks:
-  `CMCPS_GLANCE_ALCM_TOKEN`, `CMCPS_GLANCE_MEMBERSHIP_TOKEN`.
+  `CMSMCP_GLANCE_ALCM_TOKEN`, `CMSMCP_GLANCE_MEMBERSHIP_TOKEN`.
 - **ALCM (CADI) endpoints verified live**: `GET /alcm/api/user`,
   `/alcm/api/analysis` (internal list `{analysis:[...]}`, ~1.7 MB),
   `/alcm/api/public/analysis` (`{analyses:[...]}`), `/alcm/api/notes`
   (`{notes:[...]}`, single ~15 MB payload — needs
-  `CMCPS_MAX_RESPONSE_BYTES` > ~16 MB), `/alcm/api/notes/{id}`,
+  `CMSMCP_MAX_RESPONSE_BYTES` > ~16 MB), `/alcm/api/notes/{id}`,
   `/alcm/api/notes/types`, `/alcm/api/projects`,
   `/alcm/api/working-groups` (non-physics), `/alcm/api/physics-working-groups`,
   `/alcm/api/members` (~1.1 MB roster), `/alcm/api/analysis/{id}` and
@@ -481,12 +481,12 @@ Authenticated discovery (browser network inspection) found the mechanism:
     `XSearch` queries *other* DocDB installations and shows only public
     documents of those — useless here.
   - `GET /cgi-bin/DocDB/ListBy?days=N` — "see recent" table (same row
-    shape). `ListBy?alldocs=1` exceeds `CMCPS_MAX_RESPONSE_BYTES` (10 MB)
+    shape). `ListBy?alldocs=1` exceeds `CMSMCP_MAX_RESPONSE_BYTES` (10 MB)
     on the live corpus and is intentionally not exposed. `ListAuthors`
     (~620 KB) and `ListTopics`/`DocumentDatabase` (~160 KB) exist but add
     no search value over `docdb_search`; not implemented.
   - `GET /cgi-bin/DocDB/RetrieveFile?docid=N&filename=F[&version=M]` —
-    file download into bounded CMcpS storage (verified: fetch of the
+    file download into bounded cmsmcp storage (verified: fetch of the
     LAGG rules PDF, docid 14372, 315 kB).
 - **Tools** (4): `docdb_get_document`, `docdb_search`, `docdb_list_recent`,
   `docdb_download_file`.
@@ -926,7 +926,7 @@ Authenticated discovery (browser network inspection) found the mechanism:
   directly, so no RFC 8693 audience exchange entry. The resource metadata
   advertises `tls_client_certificate_bound_access_tokens: true`, but plain
   Bearer HTTPS calls answer 200 (mTLS binding not enforced, verified live).
-  Manual fallback: `CMCPS_PHONEBOOK_TOKEN`.
+  Manual fallback: `CMSMCP_PHONEBOOK_TOKEN`.
 - **Tools** (2): `phonebook_search` (1-based `page` arg mapped to the
   0-based backend; `has_more` derived from `last`, missing `last` treated
   as done), `phonebook_last_update`.

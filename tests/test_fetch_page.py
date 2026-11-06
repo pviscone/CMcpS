@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 from typing import Any
 
 from playwright.async_api import Error as PlaywrightError
 
-from cmcps.app import build_server
-from cmcps.auth import browser as browser_module
-from cmcps.auth.browser import fetch_page_text
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import BrowserUnavailableError
+from cmsmcp.app import build_server
+from cmsmcp.auth import browser as browser_module
+from cmsmcp.auth.browser import fetch_page_text
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import BrowserUnavailableError
+
+
+def envelope(result: Any) -> dict[str, Any]:
+    """Parse the compact-JSON tool result text (tests run with output_format=json)."""
+    return json.loads(result.content[0].text)
 
 
 def _settings(tmp_path: Path, **kwargs: Any) -> Settings:
@@ -347,7 +353,7 @@ async def test_service_fetch_page_browser_unavailable_returns_none(
 async def test_cern_fetch_page_requires_sso(settings: Settings) -> None:
     server = build_server(settings)
     result = await server.call_tool("cern_fetch_page", {"url": "https://service.cern.ch/page"})
-    payload = result.structured_content
+    payload = envelope(result)
     assert payload is not None
     assert payload["status"] == "error"
     assert payload["error"]["code"] == "AUTH_REQUIRED"
@@ -365,7 +371,7 @@ async def test_cern_fetch_page_success(
     result = await server.call_tool(
         "cern_fetch_page", {"url": "https://service.cern.ch/page", "wait_for": "TSO"}
     )
-    payload = result.structured_content
+    payload = envelope(result)
     assert payload is not None
     assert payload["status"] == "ok"
     data = payload["data"]
@@ -405,7 +411,7 @@ async def test_cern_fetch_page_binary_points_to_download_tool(
     result = await server.call_tool(
         "cern_fetch_page", {"url": "https://cms-alcm.web.cern.ch/notes/x/v4.pdf"}
     )
-    payload = result.structured_content
+    payload = envelope(result)
     assert payload is not None
     assert payload["status"] == "error"
     assert payload["error"]["code"] == "UPSTREAM_ERROR"
@@ -419,7 +425,7 @@ async def test_cern_download_file_requires_sso(settings: Settings) -> None:
     result = await server.call_tool(
         "cern_download_file", {"url": "https://service.cern.ch/file.pdf"}
     )
-    payload = result.structured_content
+    payload = envelope(result)
     assert payload is not None
     assert payload["status"] == "error"
     assert payload["error"]["code"] == "AUTH_REQUIRED"
@@ -431,7 +437,7 @@ async def test_cern_download_file_rejects_path_filename(settings: Settings) -> N
         "cern_download_file",
         {"url": "https://service.cern.ch/file.pdf", "filename": "../evil.pdf"},
     )
-    payload = result.structured_content
+    payload = envelope(result)
     assert payload is not None
     assert payload["status"] == "error"
     assert payload["error"]["code"] == "INVALID_INPUT"

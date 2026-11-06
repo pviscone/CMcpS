@@ -1,0 +1,129 @@
+"""MCP tool registration for the CMS HLT info adapter."""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from mcp.server.mcpserver import MCPServer
+from pydantic import Field
+
+from cmsmcp.adapters import hltinfo
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.results import ToolEnvelope
+from cmsmcp.net.client import SafeHttpClient
+from cmsmcp.tools.common import guarded
+
+_AUTH_DOC = (
+    " Requires CMSMCP_HLTINFO_TOKEN (Keycloak Bearer token for the service; "
+    "obtained via authenticated web login, injected as Authorization header)."
+)
+
+
+def register_hltinfo_tools(
+    server: MCPServer,
+    settings: Settings,
+    auth: AuthService,
+    http: SafeHttpClient,
+) -> None:
+    """Register the read-only CMS HLT info tools."""
+
+    @server.tool(
+        name="hltinfo_list_menus",
+        description=(
+            "HLT menus known to the service (cmshltinfo-dev API) — the entry "
+            "point for trigger-menu questions ('which HLT menu ran in year Y'). "
+            "For run/fill/lumi data use cmsonline_*. " + _AUTH_DOC
+        ),
+    )
+    async def hltinfo_list_menus() -> ToolEnvelope:
+        """HLT menu list."""
+        return await guarded(auth, lambda: hltinfo.list_menus(http, settings))
+
+    @server.tool(
+        name="hltinfo_get_path_summary",
+        description=(
+            "Per-year HLT path summary (per-path lumi counts, datasets, run "
+            "spans). Rows are never returned inline — the raw table is ~8 MB; "
+            "the bounded JSON is written to cmsmcp download storage and the "
+            "result carries only years, per-year counts, truncation info, and "
+            "the file path. Optional year filter (default latest 5) and "
+            "case-insensitive pathname_contains filter. " + _AUTH_DOC
+        ),
+    )
+    async def hltinfo_get_path_summary(
+        year: Annotated[
+            int | None,
+            Field(description="Restrict to one year (e.g. 2025); default: latest 5."),
+        ] = None,
+        pathname_contains: Annotated[
+            str | None,
+            Field(
+                description="Case-insensitive path-name substring filter applied "
+                "before writing the file, e.g. Ele, Mu, Tau."
+            ),
+        ] = None,
+    ) -> ToolEnvelope:
+        """Path summary (file + metadata)."""
+        return await guarded(
+            auth,
+            lambda: hltinfo.get_path_summary(
+                http, settings, year=year, pathname_contains=pathname_contains
+            ),
+        )
+
+    @server.tool(
+        name="hltinfo_get_path_names",
+        description=(
+            "HLT path names, optionally narrowed by a simple filter (e.g. "
+            "HLT_Ele, Muon) — discover a trigger path name before querying its "
+            "detail with hltinfo_get_path. " + _AUTH_DOC
+        ),
+    )
+    async def hltinfo_get_path_names(name_filter: str | None = None) -> ToolEnvelope:
+        """Path name listing."""
+        return await guarded(
+            auth, lambda: hltinfo.get_path_names(http, settings, name_filter=name_filter)
+        )
+
+    @server.tool(
+        name="hltinfo_get_path",
+        description=(
+            "Full record of one HLT path (versions, filter definitions, "
+            "per-run semantics) by exact path name; follow "
+            "hltinfo_get_path_names. " + _AUTH_DOC
+        ),
+    )
+    async def hltinfo_get_path(path_name: str) -> ToolEnvelope:
+        """HLT path detail."""
+        return await guarded(auth, lambda: hltinfo.get_path(http, settings, path_name=path_name))
+
+    @server.tool(
+        name="hltinfo_get_path_prescales",
+        description=(
+            "Prescale values of one HLT path over a run range "
+            "(min_run/max_run); follow hltinfo_get_path_names. " + _AUTH_DOC
+        ),
+    )
+    async def hltinfo_get_path_prescales(
+        path_name: str,
+        min_run: Annotated[int, Field(ge=1)] = 1,
+        max_run: Annotated[int, Field(ge=1)] = 9999999,
+    ) -> ToolEnvelope:
+        """Path prescales per run."""
+        return await guarded(
+            auth,
+            lambda: hltinfo.get_path_prescales(
+                http, settings, path_name=path_name, min_run=min_run, max_run=max_run
+            ),
+        )
+
+    @server.tool(
+        name="hltinfo_get_run_lumis",
+        description=("Run/lumi ranges where one HLT path was enabled (prescale > 0). " + _AUTH_DOC),
+    )
+    async def hltinfo_get_run_lumis(path_name: str) -> ToolEnvelope:
+        """Path run/lumi coverage."""
+        return await guarded(
+            auth, lambda: hltinfo.get_run_lumis_by_prescale(http, settings, path_name=path_name)
+        )

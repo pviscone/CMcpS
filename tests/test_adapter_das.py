@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from cmcps.adapters import das
-from cmcps.config.settings import Settings
-from cmcps.contracts.errors import InvalidInputError, UpstreamError
-from cmcps.net.proc import CommandResult
+from cmsmcp.adapters import das
+from cmsmcp.config.settings import Settings
+from cmsmcp.contracts.errors import InvalidInputError, UpstreamError
+from cmsmcp.net.proc import CommandResult
 
 FakeRunner = Callable[[Sequence[str]], Awaitable[CommandResult]]
 

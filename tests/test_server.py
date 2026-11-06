@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 
-from cmcps.app import build_server
-from cmcps.auth.service import AuthService
-from cmcps.config.settings import Settings
+from cmsmcp.app import build_server
+from cmsmcp.auth.service import AuthService
+from cmsmcp.config.settings import Settings
+
+
+def envelope(result: Any) -> dict[str, Any]:
+    """Parse the compact-JSON tool result text (tests run with output_format=json)."""
+    return json.loads(result.content[0].text)
+
 
 BOOTSTRAP_TOOLS = {
     "cern_auth_sign_in",
@@ -234,6 +241,25 @@ PHONEBOOK_TOOLS = {
     "phonebook_search",
     "phonebook_last_update",
 }
+GATEWAY_TOOLS = {
+    "cern_search",
+    "mine_overview",
+    "github_search",
+    "github_get_thread",
+    "github_get_file",
+    "rucio_list_rules",
+    "rucio_get_rule",
+    "rucio_get_did",
+}
+LXPLUS_TOOLS = {
+    "lxplus_eos_ls",
+    "lxplus_read_file",
+    "lxplus_download_file",
+    "lxplus_quota",
+    "lxplus_condor_queue",
+    "lxplus_condor_history",
+    "lxplus_crab_status",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -266,11 +292,15 @@ ALL_TOOLS = (
     | SERVICENOW_TOOLS
     | RUNREGISTRY_TOOLS
     | PHONEBOOK_TOOLS
+    | GATEWAY_TOOLS
+    | LXPLUS_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
 # any argument-specific backend work.
 ADAPTER_CALLS: dict[str, dict[str, Any]] = {
+    "cern_search": {"query": "tracker"},
+    "mine_overview": {},
     "indico_get_user_info": {},
     "indico_search_events": {},
     "indico_search": {"query": "higgs"},
@@ -470,7 +500,7 @@ async def test_protected_health_returns_structured_auth_required(
 ) -> None:
     server = build_server(settings)
     result = await server.call_tool("cern_health", {})
-    payload = result.structured_content
+    payload = envelope(result)
     assert payload is not None
     assert payload["status"] == "error"
     assert payload["error"]["code"] == "AUTH_REQUIRED"
@@ -481,7 +511,7 @@ async def test_protected_health_returns_structured_auth_required(
 async def test_adapter_tools_are_auth_gated(settings: Settings, tool_name: str) -> None:
     server = build_server(settings)
     result = await server.call_tool(tool_name, ADAPTER_CALLS[tool_name])
-    payload = result.structured_content
+    payload = envelope(result)
     assert payload is not None
     assert payload["status"] == "error"
     assert payload["error"]["code"] == "AUTH_REQUIRED"
@@ -507,7 +537,7 @@ async def test_mcm_tools_are_not_sso_gated(tmp_path) -> None:
         ("mcm_find_producing_requests", {"dataset": "/TTbar/SIM-v1/AODSIM"}),
     ):
         result = await server.call_tool(tool_name, args)
-        payload = result.structured_content
+        payload = envelope(result)
         assert payload is not None
         assert payload["status"] == "error"
         assert payload["error"]["code"] == "POLICY_VIOLATION"
@@ -528,7 +558,7 @@ async def test_das_tools_are_not_sso_gated(tmp_path) -> None:
         ("das_get_dataset_info", {"dataset": "/X/Y/Z"}),
     ):
         result = await server.call_tool(tool_name, args)
-        payload = result.structured_content
+        payload = envelope(result)
         assert payload is not None
         assert payload["status"] == "error"
         assert payload["error"]["code"] != "AUTH_REQUIRED"
@@ -539,7 +569,7 @@ async def test_explicit_bypass_makes_health_ok(tmp_path) -> None:
     settings = Settings(state_dir=tmp_path, require_sso=False)
     server = build_server(settings)
     result = await server.call_tool("cern_health", {})
-    payload = result.structured_content
+    payload = envelope(result)
     assert payload is not None
     assert payload["status"] == "ok"
     assert payload["data"]["authenticated"] is True
@@ -562,17 +592,17 @@ async def test_status_and_browser_sign_in_return_secret_free_metadata(
     server = build_server(settings, auth_service=auth)
 
     status_before = await server.call_tool("cern_auth_status", {})
-    assert status_before.structured_content["status"] == "ok"
-    assert status_before.structured_content["data"]["authenticated"] is False
+    assert envelope(status_before)["status"] == "ok"
+    assert envelope(status_before)["data"]["authenticated"] is False
 
     signed_in = await server.call_tool("cern_auth_sign_in", {"timeout_seconds": 60})
-    assert signed_in.structured_content["status"] == "ok"
-    assert signed_in.structured_content["data"]["state_file"] == settings.session_path.name
-    assert "state_path" not in signed_in.structured_content["data"]
+    assert envelope(signed_in)["status"] == "ok"
+    assert envelope(signed_in)["data"]["state_file"] == settings.session_path.name
+    assert "state_path" not in envelope(signed_in)["data"]
     serialized = signed_in.content[0].text
     assert "sso-secret-value" not in serialized
     assert "service-secret-value" not in serialized
 
     health = await server.call_tool("cern_health", {})
-    assert health.structured_content["status"] == "ok"
-    assert health.structured_content["data"]["authenticated"] is True
+    assert envelope(health)["status"] == "ok"
+    assert envelope(health)["data"]["authenticated"] is True

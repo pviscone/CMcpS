@@ -1,11 +1,11 @@
-"""Tests for cookie-only SSO site capture in cmcps.auth.browser."""
+"""Tests for cookie-only SSO site capture in cmsmcp.auth.browser."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from cmcps.auth import browser
-from cmcps.config.settings import Settings
+from cmsmcp.auth import browser
+from cmsmcp.config.settings import Settings
 
 
 class _FakeContext:

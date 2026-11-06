@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cmcps.config.settings import Settings
+from cmsmcp.config.settings import Settings
 
 
 def test_settings_derives_state_paths(tmp_path: Path) -> None:
@@ -47,7 +47,7 @@ def test_documented_env_example_parses_as_settings() -> None:
 
 
 def test_cwd_dotenv_cannot_disable_sso(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    (tmp_path / ".env").write_text("CMCPS_REQUIRE_SSO=false\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("CMSMCP_REQUIRE_SSO=false\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("CMCPS_REQUIRE_SSO", raising=False)
+    monkeypatch.delenv("CMSMCP_REQUIRE_SSO", raising=False)
     assert Settings().require_sso is True
