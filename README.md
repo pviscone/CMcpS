@@ -429,6 +429,22 @@ directory.web.cern.ch is a Drupal portal whose search tabs delegate to CDS, Indi
 - `phonebook_search` — full-text search over CERN people and services: name, first/last name, email, organic unit, office location, landlines (`phone1`/`phone2`), `mobilePhone`, postbox, preferred language per hit; `type` is `PERSON` or `SERVICE`. Fixed 10 hits per page, 1-based `page`; `total_count` and `has_more` come from the backend page.
 - `phonebook_last_update` — last-update timestamp of the directory database (result freshness).
 
+## GitHub tools (api.github.com; cms-sw/cmssw by default)
+
+Public GitHub REST API, for what a model cannot know reliably: why/when a CMSSW change happened, review threads, and the exact current code on a branch. PR/issue search and reads work **anonymously** (~10 searches/min, 60 requests/hour); `kind='code'` search requires `CMCPS_GITHUB_TOKEN` (fine-grained, public repositories, no permissions). The token goes only to api.github.com; CERN cookies are never sent. These tools are intentionally *not* behind the CERN SSO guard.
+
+- `github_search` — PRs, issues (default `cms-sw/cmssw`, any public repo via `repo=owner/name`) or code: title, URL, state (`(merged)` for merged PRs), author, labels, snippet; sorted by recently updated.
+- `github_get_thread` — one PR/issue by number: body, human comments (bots skipped, review comments carry their file path), and for PRs merge state, base/head branches, diff size and changed files.
+- `github_get_file` — a numbered line window (max 300 lines/call) of one file at a `ref` (branch/tag/commit; default branch if omitted); `next_start_line` drives paging.
+
+## CMS Rucio tools (cms-rucio.cern.ch)
+
+The user's (or an account's) Rucio data rules and dataset (DID) metadata over the Rucio REST API. Auth is **X.509**, not SSO: the shared client loads the grid client certificate (`CMCPS_GRID_CERT_FILE`/`CMCPS_GRID_KEY_FILE`) only for the login host `cms-rucio-auth.cern.ch` (in the default `CMCPS_GRID_CERT_HOSTS`) and caches the returned `X-Rucio-Auth-Token` until shortly before expiry; data calls then carry the token, never the cert or SSO cookies. Account comes from the `account` argument or `CMCPS_RUCIO_ACCOUNT`. These tools are intentionally *not* behind the CERN SSO guard.
+
+- `rucio_list_rules` — replication rules with dataset, RSE expression, state, lock counts (`ok/replicating/stuck`), expiry; filters `state` (OK/REPLICATING/STUCK/SUSPENDED/WAITING_APPROVAL) and `name_contains`.
+- `rucio_get_rule` — one rule by 32-hex id: state, locks, error, expiry, activity, grouping.
+- `rucio_get_did` — metadata of one DID (`scope:name`, e.g. `cms:/A/B/TIER`): size, file count, openness, and the rules placing it.
+
 ## Configuration
 
 Configuration uses environment variables with the `CMCPS_` prefix. Common settings:
@@ -457,6 +473,8 @@ Configuration uses environment variables with the `CMCPS_` prefix. Common settin
 | `CMCPS_WEBSITES_CACHE_MAX_AGE_DAYS` | `30` | Inventory cache age after which searches auto-refresh |
 | `CMCPS_MATTERMOST_BASE_URL` | `https://mattermost.web.cern.ch` | CERN Mattermost instance |
 | `CMCPS_MATTERMOST_TOKEN` | unset | Optional Mattermost personal access token (normally the SSO-minted `MMAUTHTOKEN` cookie is used) |
+| `CMCPS_RUCIO_ACCOUNT` | unset | Default CMS Rucio account for the `rucio_*` tools (grid client-certificate auth, not SSO) |
+| `CMCPS_GITHUB_TOKEN` | unset | Optional GitHub token for api.github.com (raises rate limits, unlocks code search) |
 
 Service tokens come only from these namespaced environment variables and are injected by the trusted HTTP layer; they are never accepted as tool arguments, mixed into unrelated origins, or written to logs.
 

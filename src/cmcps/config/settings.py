@@ -22,6 +22,9 @@ DEFAULT_ALLOWED_HOSTS = (
     "crt.sh",
     # CERN IT Service-Now portal (service-portal search API + KB JSONv2 reads).
     "cern.service-now.com",
+    # Public GitHub REST API (cms-sw/cmssw etc.; anonymous reads, optional
+    # operator-configured token sent to this host only).
+    "api.github.com",
 )
 DEFAULT_SSO_START_URL = "https://indico.cern.ch/user/dashboard/"
 DEFAULT_SSO_IDENTITY_HOST = "auth.cern.ch"
@@ -137,8 +140,19 @@ class Settings(BaseSettings):
     # Hosts the CMS web front-end authenticates with an X509 grid client
     # certificate over TLS (no SSO-cookie flow exists there): requests to one
     # of these hosts go through a lazy SSL context that loads the cert/key
-    # above instead of carrying SSO cookies.
-    grid_cert_hosts: tuple[str, ...] = ("cmsweb.cern.ch",)
+    # above instead of carrying SSO cookies. cms-rucio-auth.cern.ch is the
+    # Rucio x509 login host; data calls go to cms-rucio.cern.ch with the
+    # returned token, not the cert.
+    grid_cert_hosts: tuple[str, ...] = ("cmsweb.cern.ch", "cms-rucio-auth.cern.ch")
+    # CMS Rucio (cms-rucio.cern.ch REST API): x509 token login on the auth
+    # host above; CMS datasets live in the "cms" scope. No SSO cookies.
+    rucio_auth_url: str = "https://cms-rucio-auth.cern.ch"
+    rucio_base_url: str = "https://cms-rucio.cern.ch"
+    rucio_account: str | None = None
+    # GitHub REST API (api.github.com): anonymous reads work; the optional
+    # token raises rate limits and unlocks code search. Sent to
+    # api.github.com only.
+    github_token: str | None = None
 
     @property
     def session_path(self) -> Path:

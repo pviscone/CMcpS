@@ -19,6 +19,7 @@ from cmcps.tools.dqm import register_dqm_tools
 from cmcps.tools.edms import register_edms_tools
 from cmcps.tools.eguide import register_eguide_tools
 from cmcps.tools.elog import register_elog_tools
+from cmcps.tools.github import register_github_tools
 from cmcps.tools.gitlab import register_gitlab_tools
 from cmcps.tools.glance import register_glance_tools
 from cmcps.tools.gocms import register_gocms_tools
@@ -32,6 +33,7 @@ from cmcps.tools.mcm import register_mcm_tools
 from cmcps.tools.mkdocs import register_mkdocs_tools
 from cmcps.tools.pdftools import register_pdftools_tools
 from cmcps.tools.phonebook import register_phonebook_tools
+from cmcps.tools.rucio import register_rucio_tools
 from cmcps.tools.runregistry import register_runregistry_tools
 from cmcps.tools.servicenow import register_servicenow_tools
 from cmcps.tools.twiki import register_twiki_tools
@@ -76,3 +78,5 @@ def register_adapter_tools(
     register_websites_tools(server, settings, auth, http)
     register_servicenow_tools(server, settings, auth, http)
     register_runregistry_tools(server, settings, auth, http)
+    register_github_tools(server, http)
+    register_rucio_tools(server, settings, http)

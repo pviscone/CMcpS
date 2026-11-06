@@ -234,6 +234,16 @@ PHONEBOOK_TOOLS = {
     "phonebook_search",
     "phonebook_last_update",
 }
+GITHUB_TOOLS = {
+    "github_search",
+    "github_get_thread",
+    "github_get_file",
+}
+RUCIO_TOOLS = {
+    "rucio_list_rules",
+    "rucio_get_rule",
+    "rucio_get_did",
+}
 ALL_TOOLS = (
     BOOTSTRAP_TOOLS
     | INDICO_TOOLS
@@ -266,6 +276,8 @@ ALL_TOOLS = (
     | SERVICENOW_TOOLS
     | RUNREGISTRY_TOOLS
     | PHONEBOOK_TOOLS
+    | GITHUB_TOOLS
+    | RUCIO_TOOLS
 )
 
 # Minimal arguments per adapter tool, used to prove the auth guard fires before
@@ -359,6 +371,9 @@ ADAPTER_CALLS: dict[str, dict[str, Any]] = {
     # tools are also absent: McM's public REST API is anonymous (no SSO).
     # The dqm_* tools are absent for the same reason as DAS: cmsweb
     # authenticates the grid client certificate, never an SSO session.
+    # github_* talk only to the public GitHub REST API and rucio_* use the
+    # grid client certificate on cms-rucio-auth: neither is SSO-gated; both are
+    # covered by test_github_rucio_tools_are_not_sso_gated below.
     "gocms_list_links": {},
     "gocms_get_link": {"link_id": 1},
     "gocms_list_tags": {},
@@ -533,6 +548,34 @@ async def test_das_tools_are_not_sso_gated(tmp_path) -> None:
         assert payload["status"] == "error"
         assert payload["error"]["code"] != "AUTH_REQUIRED"
         assert payload["error"]["code"] == "UPSTREAM_ERROR"
+
+
+async def test_github_rucio_tools_are_not_sso_gated(tmp_path) -> None:
+    """GitHub (public REST) and Rucio (grid cert) tools must never fail with AUTH_REQUIRED.
+
+    The allowlist is narrowed to a non-CERN host so both adapters fail fast and
+    deterministically at URL validation (POLICY_VIOLATION) without network.
+    """
+    settings = Settings(
+        state_dir=tmp_path,
+        browser_executable=None,
+        allowed_hosts=("example.invalid",),
+    )
+    server = build_server(settings)
+    for tool_name, args in (
+        ("github_search", {"query": "seeding"}),
+        ("github_get_thread", {"number": 1}),
+        ("github_get_file", {"path": "a/b.py"}),
+        ("rucio_list_rules", {"account": "jdoe"}),
+        ("rucio_get_rule", {"rule_id": "a" * 32, "account": "jdoe"}),
+        ("rucio_get_did", {"did": "cms:/A/B/TIER", "account": "jdoe"}),
+    ):
+        result = await server.call_tool(tool_name, args)
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["status"] == "error"
+        assert payload["error"]["code"] != "AUTH_REQUIRED"
+        assert payload["error"]["code"] == "POLICY_VIOLATION"
 
 
 async def test_explicit_bypass_makes_health_ok(tmp_path) -> None:
