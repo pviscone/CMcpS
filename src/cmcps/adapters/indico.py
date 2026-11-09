@@ -39,6 +39,10 @@ _SEARCH_TYPES = (
     "event_note",
 )
 _DATE_FORMAT = "%Y-%m-%d"
+_SORT_MODES = ("relevance", "newest", "oldest")
+# The /search/api/search backend hard-caps at 10 results per page (the limit
+# parameter is ignored), so deep result sets need explicit page iteration.
+_MAX_SEARCH_PAGES = 40
 
 
 def _url(settings: Settings, path: str) -> str:
@@ -169,33 +173,94 @@ async def search_events(
     )
 
 
+def _search_date_key(item: dict[str, Any]) -> str:
+    return str(item.get("modified_dt") or "")
+
+
+async def _search_type(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    query: str,
+    content_type: str,
+    limit: int,
+    sort: str,
+) -> dict[str, Any]:
+    """Fetch one content type, paging through the 10-result backend pages.
+
+    ``sort="relevance"`` keeps the backend ranking and stops fetching once
+    enough hits are in; ``"newest"``/``"oldest"`` require the full result set
+    (no server-side sort exists) and sort client-side on ``modified_dt``.
+    """
+    items: list[dict[str, Any]] = []
+    total: int | None = None
+    hit_page_cap = True
+    for page in range(1, _MAX_SEARCH_PAGES + 1):
+        response = await client.request(
+            "GET",
+            _url(settings, "/search/api/search"),
+            params={"q": query, "type": content_type, "page": page},
+            authenticated=_use_sso_cookies(settings),
+            service_headers=_service_headers(settings),
+        )
+        payload = json_body(response, source=SOURCE)
+        hits = _as_list(payload.get("results") or payload.get("hits"))
+        if not hits:
+            hit_page_cap = False
+            break
+        items.extend(hits)
+        server_total = payload.get("total")
+        if isinstance(server_total, int):
+            total = server_total
+        pages = payload.get("pages")
+        if (
+            (sort == "relevance" and len(items) >= limit)
+            or (isinstance(pages, int) and page >= pages)
+            or (isinstance(total, int) and len(items) >= total)
+        ):
+            hit_page_cap = False
+            break
+    fetched = len(items)
+    if sort != "relevance":
+        items.sort(key=_search_date_key, reverse=sort == "newest")
+    items = items[:limit]
+    count = total if isinstance(total, int) else fetched
+    return {
+        "count": count,
+        "returned": len(items),
+        "has_more": hit_page_cap or fetched > len(items) or count > fetched,
+        "items": items,
+    }
+
+
 async def search(
     client: SafeHttpClient,
     settings: Settings,
     *,
     query: str,
     limit: int = 25,
+    sort: str = "relevance",
 ) -> dict[str, Any]:
     """Full-text search across Indico content types via /search/api/search."""
+    if sort not in _SORT_MODES:
+        raise InvalidInputError(f"sort must be one of {', '.join(_SORT_MODES)}, got {sort!r}")
     results: dict[str, Any] = {}
     total = 0
     for content_type in _SEARCH_TYPES:
-        response = await client.request(
-            "GET",
-            _url(settings, "/search/api/search"),
-            params={"q": query, "type": content_type, "limit": limit},
-            authenticated=_use_sso_cookies(settings),
-            service_headers=_service_headers(settings),
+        results[content_type] = await _search_type(
+            client,
+            settings,
+            query=query,
+            content_type=content_type,
+            limit=limit,
+            sort=sort,
         )
-        payload = json_body(response, source=SOURCE)
-        hits = payload.get("results") or payload.get("hits") or []
-        hits = _as_list(hits)
-        results[content_type] = {"count": len(hits), "items": hits}
-        total += len(hits)
+        total += results[content_type]["returned"]
     return {
         "source": SOURCE,
         "query": query,
         "limit_per_type": limit,
+        "sort": sort,
         "total": total,
         "results": results,
     }

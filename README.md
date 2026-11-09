@@ -82,7 +82,7 @@ MCP does not guarantee client-side call order, so CMcpS enforces authentication 
 
 - `indico_get_user_info` — profile of the configured API-token user.
 - `indico_search_events` — events in a category (legacy export API, `category_id`, date range, `limit`/`offset`).
-- `indico_search` — full-text search across Indico content types.
+- `indico_search` — full-text search across Indico content types (categories, events, contributions, subcontributions, attachments/materials, notes); pages the 10-per-page backend automatically, `sort` = `relevance` (default) / `newest` / `oldest` (client-side, fetches all pages); per type `count` is the server total and `has_more` flags unreturned hits.
 - `indico_get_event` — one event, optionally with contributions and sessions.
 - `indico_get_event_contributions` — talks of an event, optionally subcontributions.
 - `indico_get_event_files` — attachment metadata and download URLs for an event and its contributions.

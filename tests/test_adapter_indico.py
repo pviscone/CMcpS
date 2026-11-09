@@ -164,7 +164,7 @@ async def test_full_text_search_groups_by_type_and_is_get_only(tmp_path: Path) -
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/search/api/search"
         assert request.url.params["q"] == "tracker"
-        return httpx.Response(200, json={"results": [{"title": "hit"}]})
+        return httpx.Response(200, json={"results": [{"title": "hit"}], "total": 1, "pages": 1})
 
     recorder = Recorder(handler)
     settings, client = make_client(tmp_path, recorder)
@@ -178,8 +178,90 @@ async def test_full_text_search_groups_by_type_and_is_get_only(tmp_path: Path) -
         "event_note",
     }
     assert result["total"] == 6
+    assert all(
+        entry == {"count": 1, "returned": 1, "has_more": False, "items": [{"title": "hit"}]}
+        for entry in result["results"].values()
+    )
     assert len(recorder.requests) == 6
     assert all(request.method == "GET" for request in recorder.requests)
+
+
+async def test_search_relevance_stops_after_enough_hits(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["type"] != "attachment":
+            return httpx.Response(200, json={"results": []})
+        return httpx.Response(
+            200,
+            json={"results": [{"title": f"hit{i}"} for i in range(10)], "total": 50, "pages": 5},
+        )
+
+    recorder = Recorder(handler)
+    settings, client = make_client(tmp_path, recorder)
+    result = await indico.search(client, settings, query="tracker", limit=5)
+    attachment = result["results"]["attachment"]
+    assert attachment["count"] == 50
+    assert attachment["returned"] == 5
+    assert attachment["has_more"] is True
+    pages = [
+        r.url.params["page"] for r in recorder.requests if r.url.params["type"] == "attachment"
+    ]
+    assert pages == ["1"]
+
+
+async def test_search_newest_paginates_and_sorts_by_date(tmp_path: Path) -> None:
+    pages_payload = {
+        "1": [(f"hit{i}", f"2026-11-0{i}") for i in range(3)],
+        "2": [("old", "2025-01-01"), ("newest", "2026-12-31")],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["type"] != "attachment":
+            return httpx.Response(200, json={"results": []})
+        page = request.url.params["page"]
+        hits = [{"title": t, "modified_dt": d} for t, d in pages_payload.get(page, [])]
+        return httpx.Response(200, json={"results": hits, "total": 5, "pages": 2})
+
+    recorder = Recorder(handler)
+    settings, client = make_client(tmp_path, recorder)
+    result = await indico.search(client, settings, query="tracker", limit=5, sort="newest")
+    attachment = result["results"]["attachment"]
+    assert attachment["count"] == 5
+    assert attachment["returned"] == 5
+    assert attachment["has_more"] is False
+    dates = [item["modified_dt"] for item in attachment["items"]]
+    assert dates == sorted(dates, reverse=True)
+    assert dates[0] == "2026-12-31"
+    pages = [
+        r.url.params["page"] for r in recorder.requests if r.url.params["type"] == "attachment"
+    ]
+    assert pages == ["1", "2"]
+
+
+async def test_search_oldest_and_empty_pages_terminate(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["type"] != "event_note":
+            return httpx.Response(200, json={"results": []})
+        page = request.url.params["page"]
+        if page == "1":
+            hits = [{"note_id": n, "modified_dt": f"2026-01-0{n}"} for n in (2, 1)]
+            return httpx.Response(200, json={"results": hits})
+        return httpx.Response(200, json={"results": []})
+
+    recorder = Recorder(handler)
+    settings, client = make_client(tmp_path, recorder)
+    result = await indico.search(client, settings, query="tracker", limit=5, sort="oldest")
+    note = result["results"]["event_note"]
+    assert [item["note_id"] for item in note["items"]] == [1, 2]
+    assert note["count"] == 2
+    assert note["has_more"] is False
+
+
+async def test_search_rejects_unknown_sort(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _: httpx.Response(200, json={"results": []}))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(InvalidInputError):
+        await indico.search(client, settings, query="tracker", sort="chronological")
+    assert recorder.requests == []
 
 
 async def test_get_event_merges_contributions_and_sessions(tmp_path: Path) -> None:

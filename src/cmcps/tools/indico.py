@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
@@ -73,17 +73,26 @@ def register_indico_tools(
         description=(
             "Full-text search across Indico content types (categories, events, "
             "contributions, attachments, notes) via the Indico search API — the "
-            "entry point for 'find a meeting/talk/slides about X'. NOT for "
-            "published papers (inspire_search_papers), forum discussions "
+            "entry point for 'find a meeting/talk/slides about X'. Results are "
+            "paged automatically (the backend returns 10 per page); per type "
+            "'count' is the server-reported total, 'returned' the items kept, "
+            "and 'has_more' flags unreturned hits. sort='newest'/'oldest' "
+            "orders hits client-side on the modification date and fetches all "
+            "pages, which makes broad queries slower. NOT for published "
+            "papers (inspire_search_papers), forum discussions "
             "(discourse_search), or internal CMS analyses (glance_*)."
         ),
     )
     async def indico_search(
         query: str,
         limit: Annotated[int, Field(ge=1, le=50)] = 25,
+        sort: Literal["relevance", "newest", "oldest"] = "relevance",
     ) -> ToolEnvelope:
         """Full-text Indico search grouped by content type."""
-        return await guarded(auth, lambda: indico.search(http, settings, query=query, limit=limit))
+        return await guarded(
+            auth,
+            lambda: indico.search(http, settings, query=query, limit=limit, sort=sort),
+        )
 
     @server.tool(
         name="indico_get_event",
