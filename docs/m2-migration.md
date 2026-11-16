@@ -66,7 +66,7 @@ adapter answers "not found" plus configuration instructions.
 | `search_cds_documents` | `cds_search` | Adds `page` parameter (`jrec`) |
 | `get_cds_document_details` | `cds_get_record` | Accepts `123456` or `cds:123456` |
 | `get_cds_document_files` | `cds_get_files` | Download links only |
-| (new, no reference equivalent) | `cds_download_file` | Bounded local download; legacy iCMS (CMSFence) login placeholders detected and rejected with instructions |
+| (new, no reference equivalent) | `cds_download_file` | Bounded local download; legacy iCMS (CMSFence) login placeholders detected and rejected with instructions. Since the 2026 CDS migration file URLs redirect onto `repository.cern` (allowlisted): the shared client warms/re-warms that site's SSO session and retries once on an SSO bounce, and the PDF.js preview shell at the end of the chain is resolved to the byte route named in its `pdf-file-uri` input |
 | `get_cds_experiments` | removed | Static hard-coded list; filter values documented in tool descriptions |
 | `get_cds_document_types` | removed | Static hard-coded list |
 | `list_cds_collections` | removed | Static hard-coded list, unadvertised in the reference README |

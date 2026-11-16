@@ -337,3 +337,131 @@ async def test_download_file_rejects_anubis_challenge(tmp_path: Path) -> None:
             client, settings, download_url="https://cds.cern.ch/record/1/files/a.pdf"
         )
     assert not list(settings.download_dir.glob("a.pdf*"))
+
+
+RECORD_SPACED_NAME: dict[str, Any] = {
+    **RECORD,
+    "files": [
+        {
+            "name": "CERN_SRR_en_ed11_1_January_2025 ",
+            "full_name": "CERN_SRR_en_ed11_1_January_2025 .pdf",
+            "size": 1381617,
+            "magic": ["PDF document, version 1.7", "application/pdf", "binary"],
+        }
+    ],
+}
+
+
+async def test_get_files_percent_encodes_names_with_spaces(tmp_path: Path) -> None:
+    recorder = Recorder(ok([RECORD_SPACED_NAME]))
+    settings, client = make_client(tmp_path, recorder)
+    result = await cds.get_files(client, settings, recid="1993099")
+    item = result["items"][0]
+    assert item["name"] == "CERN_SRR_en_ed11_1_January_2025 .pdf"
+    assert item["download_url"] == (
+        "https://cds.cern.ch/record/12345/files/CERN_SRR_en_ed11_1_January_2025%20.pdf"
+    )
+    assert " " not in item["download_url"]
+
+
+async def test_download_file_unquotes_local_filename(tmp_path: Path) -> None:
+    recorder = Recorder(lambda _: httpx.Response(200, content=b"%PDF-1.7 body"))
+    settings, client = make_client(tmp_path, recorder)
+    result = await cds.download_file(
+        client,
+        settings,
+        download_url="https://cds.cern.ch/record/1993099/files/CERN_SRR_en_ed11_1_January_2025%20.pdf",
+    )
+    path = Path(result["path"])
+    assert path.name == "CERN_SRR_en_ed11_1_January_2025 .pdf"
+    assert path.read_bytes() == b"%PDF-1.7 body"
+
+
+async def test_download_file_follows_repository_cern_redirect(tmp_path: Path) -> None:
+    """CDS file URLs 301-redirect onto repository.cern; the chain must complete."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "cds.cern.ch":
+            return httpx.Response(
+                301,
+                headers={
+                    "Location": "https://repository.cern/legacy/record/1993099/files/paper.pdf"
+                },
+            )
+        assert request.url.host == "repository.cern"
+        return httpx.Response(200, content=b"%PDF-1.7 body")
+
+    recorder = Recorder(handler)
+    settings, client = make_client(tmp_path, recorder)
+    result = await cds.download_file(
+        client, settings, download_url="https://cds.cern.ch/record/1993099/files/paper.pdf"
+    )
+    assert Path(result["path"]).read_bytes() == b"%PDF-1.7 body"
+    assert [request.url.host for request in recorder.requests] == [
+        "cds.cern.ch",
+        "repository.cern",
+    ]
+    assert all(request.method == "GET" for request in recorder.requests)
+
+
+async def test_download_file_rejects_sso_login_page(tmp_path: Path) -> None:
+    login = b'<!DOCTYPE html>\n<html lang="en" class="login-pf">Sign in</html>'
+    recorder = Recorder(lambda _: httpx.Response(200, content=login))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as caught:
+        await cds.download_file(
+            client, settings, download_url="https://cds.cern.ch/record/1/files/a.pdf"
+        )
+    assert "login" in caught.value.message
+    assert "cern_auth_sign_in" in (caught.value.instructions or "")
+    assert not list(settings.download_dir.glob("a.pdf*"))
+
+
+VIEWER_SHELL = (
+    b'\n<!DOCTYPE html>\n<html dir="ltr">\n<head><title>Preview</title></head>\n<body>\n'
+    b'<input id="pdf-file-uri" type="hidden" '
+    b'value="/records/8j3yv-t0154/files/CERN_SRR_en_ed11_1_January_2025%20.pdf?preview=0" />\n'
+    b"</body></html>"
+)
+
+
+async def test_download_file_follows_pdf_viewer_shell_to_file_bytes(tmp_path: Path) -> None:
+    """The legacy chain lands on the repository PDF.js shell; fetch its pdf-file-uri."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "cds.cern.ch":
+            return httpx.Response(200, content=VIEWER_SHELL)
+        assert request.url.host == "repository.cern"
+        assert request.url.path == "/records/8j3yv-t0154/files/CERN_SRR_en_ed11_1_January_2025 .pdf"
+        assert request.url.query == b"preview=0"
+        return httpx.Response(200, content=b"%PDF-1.7 body")
+
+    recorder = Recorder(handler)
+    settings, client = make_client(tmp_path, recorder)
+    result = await cds.download_file(
+        client,
+        settings,
+        download_url="https://cds.cern.ch/record/1993099/files/CERN_SRR_en_ed11_1_January_2025%20.pdf",
+    )
+    path = Path(result["path"])
+    assert path.name == "CERN_SRR_en_ed11_1_January_2025 .pdf"
+    assert path.read_bytes() == b"%PDF-1.7 body"
+    assert result["size_bytes"] == len(b"%PDF-1.7 body")
+    assert [request.url.host for request in recorder.requests] == [
+        "cds.cern.ch",
+        "repository.cern",
+    ]
+    # the viewer shell itself is never left behind as the "file"
+    assert list(settings.download_dir.glob("*.pdf")) == [path]
+
+
+async def test_download_file_viewer_shell_without_uri_raises(tmp_path: Path) -> None:
+    broken = b'<html><input id="pdf-file-uri" type="hidden" /></html>'
+    recorder = Recorder(lambda _: httpx.Response(200, content=broken))
+    settings, client = make_client(tmp_path, recorder)
+    with pytest.raises(UpstreamError) as caught:
+        await cds.download_file(
+            client, settings, download_url="https://cds.cern.ch/record/1/files/a.pdf"
+        )
+    assert "preview shell" in caught.value.message
+    assert not list(settings.download_dir.glob("a.pdf*"))

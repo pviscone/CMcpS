@@ -138,12 +138,12 @@ Facts about `CMCPS_GITLAB_TOKEN`:
 
 ## CDS tools (cds.cern.ch)
 
-Legacy Invenio search API. CDS occasionally serves an Anubis bot challenge to non-browser clients; a completed `cern_auth_sign_in` session usually passes it.
+Legacy Invenio search API. CDS occasionally serves an Anubis bot challenge to non-browser clients; a completed `cern_auth_sign_in` session usually passes it. Record and file URLs 301-redirect onto the CERN Repository (`repository.cern`, allowlisted) since the 2026 CDS migration; restricted files there need the repository's own SSO session, which the shared client warms from the stored CERN identity (and re-warms when a download bounces to the SSO login) before retrying once.
 
 - `cds_search` — document search with experiment / document-type / date filters.
 - `cds_get_record` — full record by recid (`123456` or `cds:123456`).
-- `cds_get_files` — attachment metadata and download links for a record (links only).
-- `cds_download_file` — bounded download of one attachment URL into local CMcpS storage; returns the local path and size. Restricted records and attachments (e.g. CWR paper drafts) require the cds.cern.ch SSO cookies captured by `cern_auth_sign_in`; a missing/expired session is detected (iCMS login placeholder / login HTML) and reported instead of returning HTML as a file.
+- `cds_get_files` — attachment metadata and download links for a record (links only; file names are percent-encoded in the URLs).
+- `cds_download_file` — bounded download of one attachment URL into local CMcpS storage; returns the local path and size. The redirect chain ends at the repository's PDF.js preview shell, so the byte route it names (`pdf-file-uri`) is fetched instead. Restricted records and attachments (e.g. CWR paper drafts) require SSO; missing/expired sessions are detected (iCMS login placeholder / Keycloak login page) and reported instead of returning HTML as a file.
 
 All search/list tools share the `SearchResult` envelope (`source, items, total_count, page, size, has_more, query, sort, note`). The mapping of every original reference-server tool to its CMcpS tool (including intentional removals) is documented in [docs/m2-migration.md](docs/m2-migration.md).
 

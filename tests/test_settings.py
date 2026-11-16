@@ -16,6 +16,8 @@ def test_settings_derives_state_paths(tmp_path: Path) -> None:
     assert settings.require_sso is True
     assert settings.session_max_age_seconds == 24 * 60 * 60
     assert "*.cern.ch" in settings.allowed_hosts
+    # CDS record/file URLs redirect onto the CERN Repository (.cern TLD).
+    assert "repository.cern" in settings.allowed_hosts
 
 
 def test_comma_separated_environment_style_lists_are_typed() -> None:

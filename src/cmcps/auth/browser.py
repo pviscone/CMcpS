@@ -318,6 +318,23 @@ async def _mattermost_session_ready(context: BrowserContext) -> bool:
     return any(cookie.get("name") == "MMAUTHTOKEN" for cookie in cookies)
 
 
+async def _repository_session_ready(context: BrowserContext) -> bool:
+    """Whether the context holds a CERN Repository session on repository.cern.
+
+    repository.cern (the new CERN Repository; cds.cern.ch record/file URLs
+    301-redirect there since the 2026 CDS migration) gates restricted files
+    behind its own ``cds-rdm-prod`` OIDC handshake, which silently drops the
+    ``session`` cookie inside an SSO context. The cookie is also minted
+    anonymously, so presence alone is weak proof; the authoritative check is
+    the download retry this warm-up feeds.
+    """
+    try:
+        cookies = await context.cookies("https://repository.cern")
+    except PlaywrightError:
+        return False
+    return any(cookie.get("name") == "session" for cookie in cookies)
+
+
 # The TWiki entry visits the viewauth script so the SSO handshake drops the
 # twiki.cern.ch session cookie used by scripts that gate on login (protected
 # attachment downloads); page content itself is served anonymously.
@@ -355,6 +372,7 @@ _COOKIE_ONLY_SITES: tuple[tuple[str, SiteAdvance | None, SiteReadiness | None], 
     (JIRA_SITE_URL, _advance_jira_sso, _jira_session_ready),
     ("https://twiki.cern.ch/twiki/bin/viewauth/CMS/WebHome", None, _twiki_session_ready),
     ("https://cds.cern.ch/youraccount/login?ln=en", None, _cds_session_ready),
+    ("https://repository.cern/login/", None, _repository_session_ready),
     ("https://cms-alcm.web.cern.ch/", None, _cms_alcm_session_ready),
     (SERVICENOW_SITE_URL, None, _servicenow_session_ready),
     ("https://cmsoms.cern.ch/", None, _cmsoms_session_ready),

@@ -15,6 +15,9 @@ DEFAULT_IDENTITY_COOKIES = ("KEYCLOAK_IDENTITY",)
 DEFAULT_ALLOWED_HOSTS = (
     "cern.ch",
     "*.cern.ch",
+    # The CERN Repository (.cern TLD): cds.cern.ch record/file URLs 301-redirect
+    # here since the 2026 CDS migration; downloads must follow onto it.
+    "repository.cern",
     "inspirehep.net",
     "*.inspirehep.net",
     # Public certificate-transparency database queried by the websites adapter

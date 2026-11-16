@@ -12,7 +12,7 @@ import pytest
 from cmcps.auth.service import AuthService
 from cmcps.auth.store import SessionStore
 from cmcps.config.settings import Settings
-from cmcps.contracts.errors import PolicyViolationError, RequestTooLargeError
+from cmcps.contracts.errors import AuthRequiredError, PolicyViolationError, RequestTooLargeError
 from cmcps.net.client import SafeHttpClient
 
 
@@ -554,3 +554,86 @@ async def test_json_post_sso_bounce_warms_site_and_retries_once(
     hosts = [request.url.host for request in requests]
     assert hosts == ["cmsrunregistry.web.cern.ch", "auth.cern.ch", "cmsrunregistry.web.cern.ch"]
     assert warmed == [["https://cmsrunregistry.web.cern.ch/"]]
+
+
+async def test_download_sso_bounce_warms_site_and_retries_once(
+    settings: Settings, valid_storage_state: dict[str, Any], future_epoch: float
+) -> None:
+    """A redirect onto the Keycloak login warms the bouncing site and retries once."""
+    warmed: list[list[str]] = []
+
+    async def site_warmer(
+        _: Settings, _state: dict[str, Any], urls: list[str] | tuple[str, ...]
+    ) -> dict[str, Any]:
+        warmed.append(list(urls))
+        return {
+            "cookies": [
+                *valid_storage_state["cookies"],
+                {
+                    "name": "session",
+                    "value": "fresh",
+                    "domain": "repository.cern",
+                    "path": "/",
+                    "expires": future_epoch,
+                    "secure": True,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                },
+            ],
+            "origins": [],
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "session=" in request.headers.get("Cookie", ""):
+            return httpx.Response(200, content=b"payload")
+        return httpx.Response(
+            302,
+            headers={
+                "location": "https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/auth?x=1"
+            },
+        )
+
+    requests: list[httpx.Request] = []
+
+    def recorder(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return handler(request)
+
+    auth = AuthService(settings, site_warmer=site_warmer)
+    SessionStore(settings.session_path).save(valid_storage_state)
+    client = SafeHttpClient(
+        settings,
+        auth,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(recorder)),
+    )
+    destination = settings.download_dir / "file.pdf"
+    final = await client.download("https://repository.cern/records/x/files/file.pdf", destination)
+    assert final.read_bytes() == b"payload"
+    assert [request.url.host for request in requests] == ["repository.cern", "repository.cern"]
+    assert warmed == [["https://repository.cern/login/"]]
+
+
+async def test_download_sso_bounce_without_warmable_site_raises_auth_required(
+    settings: Settings, valid_storage_state: dict[str, Any]
+) -> None:
+    """An SSO bounce from a host with no cookie-site mapping fails as AUTH_REQUIRED."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={
+                "location": "https://auth.cern.ch/auth/realms/cern/protocol/openid-connect/auth"
+            },
+        )
+
+    client, requests = _client_with_transport(
+        handler, settings, authenticated_state=valid_storage_state
+    )
+    with pytest.raises(AuthRequiredError):
+        await client.download(
+            "https://service.cern.ch/file.bin",
+            settings.download_dir / "file.bin",
+        )
+    assert len(requests) == 1
+    assert not (settings.download_dir / "file.bin").exists()
+    assert list(settings.download_dir.glob(".file.bin.*")) == []

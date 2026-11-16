@@ -17,13 +17,14 @@ import httpx
 from cmcps.auth.browser import cookie_site_url_for_host
 from cmcps.auth.service import AuthService
 from cmcps.config.settings import Settings
-from cmcps.contracts.errors import PolicyViolationError, RequestTooLargeError
+from cmcps.contracts.errors import AuthRequiredError, PolicyViolationError, RequestTooLargeError
 from cmcps.net.safety import redact_url, validate_headers, validate_method, validate_url
 
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _CHUNK_SIZE = 64 * 1024
 _DOWNLOAD_MIN_ERROR = 300
 _WARM_RETRY_STATUSES = {401, 403}
+_DOWNLOAD_ATTEMPTS = 2
 _DUPLICATE_SLOT_LIMIT = 100
 
 
@@ -272,6 +273,20 @@ class SafeHttpClient:
         final_host = urlsplit(str(response.url)).hostname
         target_host = urlsplit(target_url).hostname
         return final_host == self.settings.sso_identity_host and final_host != target_host
+
+    def _sso_login_target(self, target: str, redirected: str) -> bool:
+        """Whether a redirect sends ``target`` to the SSO identity login.
+
+        A download chain ending at the identity host means the site's own
+        session is missing: the answer there is the login page, never the
+        requested file. ``target`` (the hop that redirected) is the site whose
+        cookie session needs warming.
+        """
+        source_host = urlsplit(target).hostname
+        return (
+            urlsplit(redirected).hostname == self.settings.sso_identity_host
+            and source_host != self.settings.sso_identity_host
+        )
 
     async def _request(
         self,
@@ -522,14 +537,42 @@ class SafeHttpClient:
         (its path is returned); a genuinely different payload with the same
         server-supplied name lands at ``name-1.ext``/``name-2.ext``/… —
         bytes already stored are never silently overwritten.
+
+        A redirect onto the SSO identity login means the site's own session is
+        missing (e.g. a CDS file URL bouncing onto the CERN Repository): the
+        bouncing site is warmed from the stored identity and the chain is
+        retried once before failing with AUTH_REQUIRED.
         """
         validate_method("GET")
         self.settings.ensure_directories()
-        target = validate_url(url, allowed_hosts=self.settings.allowed_hosts)
+        start_url = validate_url(url, allowed_hosts=self.settings.allowed_hosts)
         final = self._managed_download_path(destination)
-        temporary = final.with_name(f".{final.name}.{time.time_ns()}.part")
         if self.auth_service is None and authenticated:
             raise PolicyViolationError("An auth service is required for authenticated downloads")
+        for attempt in range(_DOWNLOAD_ATTEMPTS):
+            stored = await self._download_attempt(
+                start_url,
+                final,
+                attempt=attempt,
+                authenticated=authenticated,
+                service_headers=service_headers,
+            )
+            if stored is not None:
+                return stored
+        raise AuthRequiredError("Download redirected to the CERN SSO login instead of the file")
+
+    async def _download_attempt(
+        self,
+        start_url: str,
+        final: Path,
+        *,
+        attempt: int,
+        authenticated: bool,
+        service_headers: dict[str, str] | None,
+    ) -> Path | None:
+        """Walk the redirect chain once; ``None`` signals a warm-and-retry."""
+        target = start_url
+        temporary = final.with_name(f".{final.name}.{time.time_ns()}.part")
         session = await self.auth_service.ensure_authenticated() if authenticated else None
         try:
             try:
@@ -546,27 +589,21 @@ class SafeHttpClient:
                     ) as response:
                         redirected = self._next_redirect(response, redirects_seen)
                         if redirected is not None:
-                            target = redirected
-                            continue
+                            if not self._sso_login_target(target, redirected):
+                                target = redirected
+                                continue
+                            if attempt or not await self._warm_for_host(
+                                target, authenticated=authenticated
+                            ):
+                                raise AuthRequiredError(
+                                    "Download redirected to the CERN SSO login instead of the file"
+                                )
+                            return None
                         if response.status_code >= _DOWNLOAD_MIN_ERROR:
                             raise PolicyViolationError(
                                 f"Download failed with HTTP {response.status_code}"
                             )
-                        descriptor = os.open(
-                            temporary,
-                            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                            0o600,
-                        )
-                        written = 0
-                        with os.fdopen(descriptor, "wb") as handle:
-                            async for chunk in response.aiter_bytes(_CHUNK_SIZE):
-                                written += len(chunk)
-                                if written > self.settings.max_download_bytes:
-                                    raise RequestTooLargeError(
-                                        "Download exceeds the "
-                                        f"{self.settings.max_download_bytes} byte limit"
-                                    )
-                                handle.write(chunk)
+                        await self._stream_download(response, temporary)
                         return self._place_download(final, temporary)
                 raise PolicyViolationError("Redirect handling exceeded its policy bound")
             finally:
@@ -574,3 +611,16 @@ class SafeHttpClient:
                     temporary.unlink()
         except httpx.HTTPError as exc:
             raise PolicyViolationError(f"Download failed for {redact_url(target)}") from exc
+
+    async def _stream_download(self, response: httpx.Response, temporary: Path) -> None:
+        """Stream one non-error response body into ``temporary`` within limits."""
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        written = 0
+        with os.fdopen(descriptor, "wb") as handle:
+            async for chunk in response.aiter_bytes(_CHUNK_SIZE):
+                written += len(chunk)
+                if written > self.settings.max_download_bytes:
+                    raise RequestTooLargeError(
+                        f"Download exceeds the {self.settings.max_download_bytes} byte limit"
+                    )
+                handle.write(chunk)

@@ -14,7 +14,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 from cmcps.adapters.common import json_body
 from cmcps.config.settings import Settings
@@ -186,7 +186,7 @@ def _file_items(record: dict[str, Any]) -> list[dict[str, Any]]:
                 "size_bytes": size_bytes,
                 "size_mb": round(size_bytes / (1024 * 1024), 3) if size_bytes else None,
                 "mime_type": _mime_type(raw_file),
-                "url": f"{_BASE_URL}/record/{recid}/files/{full_name}"
+                "url": f"{_BASE_URL}/record/{recid}/files/{quote(full_name, safe='')}"
                 if full_name and recid is not None
                 else None,
             }
@@ -353,32 +353,31 @@ async def get_files(client: SafeHttpClient, settings: Settings, *, recid: str) -
 
 
 _ICMS_STUB_MARKER = b"iCMS_login.jsp"
+_SSO_LOGIN_MARKER = b"login-pf"
+_PDF_VIEWER_MARKER = b'id="pdf-file-uri"'
+_PDF_VIEWER_URI = re.compile(rb'id="pdf-file-uri"[^>]*value="([^"]+)"')
 _PROBE_BYTES = 4096
+# The CERN Repository (.cern TLD) that CDS record/file URLs 301-redirect to
+# since the 2026 migration; its PDF preview shell names the byte-serving
+# file route in the pdf-file-uri input.
+_REPOSITORY_URL = "https://repository.cern"
 
 
-async def download_file(
-    client: SafeHttpClient,
-    settings: Settings,
-    *,
-    download_url: str,
-) -> dict[str, Any]:
-    """Download one CDS attachment into CMcpS download storage.
+def _local_name(url: str) -> Path | None:
+    name = Path(unquote(urlsplit(url).path)).name
+    return Path(name) if name else None
 
-    CDS internal-note files delegate to legacy iCMS, which answers with a
-    login stub (``iCMS_login.jsp``) instead of the document. That wrapper is
-    detected and rejected so login HTML is never delivered as a file.
-    """
-    host = urlsplit(download_url).hostname
-    cds_host = urlsplit(settings.cds_base_url).hostname
-    if not host or host != cds_host:
-        raise InvalidInputError(
-            f"cds_download_file only accepts URLs on {cds_host}",
-            instructions="Pass a download_url returned by cds_get_files.",
-        )
-    filename = Path(urlsplit(download_url).path).name or None
-    destination = Path(filename) if filename else None
-    final = await client.download(download_url, destination)
-    head = final.read_bytes()[:_PROBE_BYTES]
+
+def _viewer_content_url(head: bytes) -> str | None:
+    """Absolute byte URL hidden in the repository.cern PDF.js preview shell."""
+    match = _PDF_VIEWER_URI.search(head)
+    if match is None:
+        return None
+    return urljoin(_REPOSITORY_URL, match.group(1).decode("utf-8", errors="replace"))
+
+
+def _reject_login_wrapper(final: Path, head: bytes) -> None:
+    """Delete ``final`` and raise when ``head`` is a login/bot-challenge page."""
     if _ICMS_STUB_MARKER in head:
         final.unlink()
         raise UpstreamError(
@@ -395,6 +394,51 @@ async def download_file(
             "CDS answered with an Anubis bot challenge instead of the file",
             instructions=_ANUBIS_INSTRUCTIONS,
         )
+    if _SSO_LOGIN_MARKER in head:
+        final.unlink()
+        raise UpstreamError(
+            "CDS answered with the CERN SSO login page instead of the file",
+            instructions=_ANUBIS_INSTRUCTIONS,
+        )
+
+
+async def download_file(
+    client: SafeHttpClient,
+    settings: Settings,
+    *,
+    download_url: str,
+) -> dict[str, Any]:
+    """Download one CDS attachment into CMcpS download storage.
+
+    CDS file URLs 301-redirect onto the CERN Repository (repository.cern),
+    which gates restricted files behind its own SSO session; the shared
+    client warms that session from the stored CERN identity and follows the
+    chain. PDFs land on the repository's PDF.js preview shell, so the byte
+    route named in its ``pdf-file-uri`` input is fetched instead. Legacy
+    iCMS internal-note files answer with a login stub (``iCMS_login.jsp``),
+    and a stale session can surface the Keycloak login page; both wrappers
+    are detected and rejected so login HTML is never delivered as a file.
+    """
+    host = urlsplit(download_url).hostname
+    cds_host = urlsplit(settings.cds_base_url).hostname
+    if not host or host != cds_host:
+        raise InvalidInputError(
+            f"cds_download_file only accepts URLs on {cds_host}",
+            instructions="Pass a download_url returned by cds_get_files.",
+        )
+    final = await client.download(download_url, _local_name(download_url))
+    head = final.read_bytes()[:_PROBE_BYTES]
+    if _PDF_VIEWER_MARKER in head:
+        content_url = _viewer_content_url(head)
+        final.unlink()
+        if content_url is None:
+            raise UpstreamError(
+                "CDS served the repository.cern PDF preview shell without a file URI",
+                instructions="Retry cds_download_file; if it persists, open the record page.",
+            )
+        final = await client.download(content_url, _local_name(content_url))
+        head = final.read_bytes()[:_PROBE_BYTES]
+    _reject_login_wrapper(final, head)
     return {
         "source": SOURCE,
         "download_url": download_url,
